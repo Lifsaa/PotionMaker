@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
+from typing import List
 from src.api import auth
 import sqlalchemy
 from src import database as db
