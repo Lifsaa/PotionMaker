@@ -15,16 +15,17 @@ def get_catalog():
         result = connection.execute(sqlalchemy.text("SELECT num_green_potions FROM global_inventory WHERE id = 1")).fetchone()
         if result is not None:
             num_green_potions = result.num_green_potions
-        else: num_green_potions = []
-
-    return [
-            {
-                "sku": "GREEN_POTION_0",
-                "name": "green potion",
-                "quantity": num_green_potions,
-                "price": 5,
-                "potion_type": [0, 100, 0, 0],
-            }
-        ]
+        else: num_green_potions = 0
+    if num_green_potions >0 :
+        return [
+                {
+                    "sku": "GREEN_POTION_0",
+                    "name": "green potion",
+                    "quantity": num_green_potions,
+                    "price": 5,
+                    "potion_type": [0, 100, 0, 0],
+                }
+            ]
+    else: return []
 
 
