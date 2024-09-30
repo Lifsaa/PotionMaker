@@ -30,7 +30,10 @@ def get_bottle_plan():
 
     with db.engine.begin() as connection:
         result = connection.execute(sqlalchemy.text("SELECT num_green_ml FROM global_inventory WHERE id = 1")).fetchone()
-    num_green_ml = result.num_green_ml
+    if result is not None:
+        num_green_ml = result.num_green_ml
+    else:
+        num_green_ml  = 0
     if num_green_ml > 0:
         potions_created = num_green_ml // 100
         remaining_ml = num_green_ml % 100
