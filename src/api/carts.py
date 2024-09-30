@@ -88,15 +88,23 @@ def post_visits(visit_id: int, customers: list[Customer]):
 @router.post("/")
 def create_cart(new_cart: Customer):
     with db.engine.begin() as connection:
-        result = connection.execute(sqlalchemy.text("SELECT num_green_potions,gold FROM global_inventory WHERE id = 1")).fetchone()
-        num_green_potions = result.num_green_potions if result is not None else 0
-        gold = result.gold
-    if num_green_potions <=0:
-        return {"error":"Insufficient potions available  in inventory to create a cart"}
+        result = connection.execute(sqlalchemy.text("SELECT num_green_potions, gold FROM global_inventory WHERE id = 1")).fetchone()
+        
+        # Check if result is None before accessing its attributes
+        if result is not None:
+            num_green_potions = result.num_green_potions
+            gold = result.gold
+        else:
+            num_green_potions = 0
+            gold = 0  # Set a default value or handle as per your logic
+        
+    if num_green_potions <= 0:
+        return {"error": "Insufficient potions available in inventory to create a cart"}
     if gold < 5:
-        return {"error":"Insufficient gold to proceed"}
+        return {"error": "Insufficient gold to proceed"}
 
     return {"cart_id": 1}
+
 
 
 class CartItem(BaseModel):
@@ -107,10 +115,13 @@ class CartItem(BaseModel):
 def set_item_quantity(cart_id: int, item_sku: str, cart_item: CartItem):
     with db.engine.begin() as connection:
         result = connection.execute(sqlalchemy.text("SELECT num_green_potions FROM global_inventory WHERE id = 1")).fetchone()
-        num_green_potions = result.num_green_potions if result is None else 0
+        
+        # Correct the condition to check if result is not None
+        num_green_potions = result.num_green_potions if result is not None else 0
+        
         if cart_item.quantity > num_green_potions:
             return {"error": f"Requested quantity exceeds available inventory. Only {num_green_potions} potions are available."}
-    return {"status": "Item quantity upload sucessfully"}
+    return {"status": "Item quantity updated successfully"}
 
 
 class CartCheckout(BaseModel):
@@ -134,4 +145,4 @@ def checkout(cart_id: int, cart_checkout: CartCheckout):
         
         if total_potions_bought > 0:
             return {"total_potions_bought": total_potions_bought, "total_gold_paid": total_gold_paid}
-        else: return []
+        else: return {"error":"No potions were bought"}
