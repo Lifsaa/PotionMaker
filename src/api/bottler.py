@@ -29,15 +29,14 @@ def get_bottle_plan():
     """
 
     with db.engine.begin() as connection:
-        result = connection.execute(sqlalchemy.text("SELECT num_green_ml FROM global_inventory LIMIT 1 WHERE id = 1")).fetchone()
+        result = connection.execute(sqlalchemy.text("SELECT num_green_ml FROM global_inventory WHERE id = 1")).fetchone()
     num_green_ml = result.num_green_ml
     if num_green_ml > 0:
         potions_created = num_green_ml // 100
-        remaaining_ml = num_green_ml % 100
+        remaining_ml = num_green_ml % 100
     with db.engine.begin() as connection:
         result = connection.execute(sqlalchemy.text(
-            "UPDATE global_inventory"
-            "SET num_green_ml: remaining_ml, num_green_potions = num_green_potions + potions_created WHERE id = 1"))
+            "UPDATE global_inventory SET num_green_ml = remaining_ml, num_green_potions = num_green_potions + potions_created WHERE id = 1"))
 
         
     # Each bottle has a quantity of what proportion of red, blue, and
