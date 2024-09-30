@@ -87,7 +87,15 @@ def post_visits(visit_id: int, customers: list[Customer]):
 
 @router.post("/")
 def create_cart(new_cart: Customer):
-    """ """
+    with db.engine.begin() as connection:
+        result = connection.execute(sqlalchemy.text("SELECT num_green_potions,gold FROM global_inventory WHERE id = 1")).fetchone()
+        num_green_potions = result.num_green_potions if result is not None else 0
+        gold = result.gold
+    if num_green_potions <=0:
+        return {"error":"Insufficient potions available  in inventory to create a cart"}
+    if gold < 5:
+        return {"error":"Insufficient gold to proceed"}
+
     return {"cart_id": 1}
 
 
@@ -97,9 +105,12 @@ class CartItem(BaseModel):
 
 @router.post("/{cart_id}/items/{item_sku}")
 def set_item_quantity(cart_id: int, item_sku: str, cart_item: CartItem):
-    """ """
-
-    return "OK"
+    with db.engine.begin() as connection:
+        result = connection.execute(sqlalchemy.text("SELECT num_green_potions FROM global_inventory WHERE id = 1")).fetchone()
+        num_green_potions = result.num_green_potions if result is None else 0
+        if cart_item.quantity > num_green_potions:
+            return {"error": f"Requested quantity exceeds available inventory. Only {num_green_potions} potions are available."}
+    return {"status": "Item quantity upload sucessfully"}
 
 
 class CartCheckout(BaseModel):
@@ -107,6 +118,20 @@ class CartCheckout(BaseModel):
 
 @router.post("/{cart_id}/checkout")
 def checkout(cart_id: int, cart_checkout: CartCheckout):
-    """ """
+     with db.engine.begin() as connection:
+        result = connection.execute(sqlalchemy.text("SELECT num_green_potions FROM global_inventory WHERE id = 1")).fetchone()
+        num_green_potions = result.num_green_potions if result is not None else 0
 
-    return {"total_potions_bought": 1, "total_gold_paid": 50}
+        if num_green_potions > 0:
+            connection.execute(sqlalchemy.text(
+                "UPDATE global_inventory SET num_green_potions = num_green_potions - 1 WHERE id = 1"
+            ))
+            total_potions_bought = 1
+            total_gold_paid = 5 
+        else:
+            total_potions_bought = 0
+            total_gold_paid = 0
+        
+        if total_potions_bought > 0:
+            return {"total_potions_bought": total_potions_bought, "total_gold_paid": total_gold_paid}
+        else: return []
