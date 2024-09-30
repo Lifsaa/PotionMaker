@@ -26,7 +26,10 @@ def post_deliver_bottles(potions_delivered: list[PotionInventory], order_id: int
 def get_bottle_plan():
     with db.engine.begin() as connection:
         result = connection.execute(sqlalchemy.text("SELECT num_green_ml FROM global_inventory WHERE id = 1")).fetchone()
-        num_green_ml = result.num_green_ml if result is not None else 0    
+        if result is not None:
+            num_green_ml = result.num_green_ml 
+        else:
+            num_green_ml = []
         potions_created = 0
         remaining_ml = 0      
         if num_green_ml > 0:

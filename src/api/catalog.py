@@ -14,7 +14,7 @@ def get_catalog():
         result = connection.execute(sqlalchemy.text("SELECT num_green_potions FROM global_inventory WHERE id = 1")).fetchone()
         if result is not None:
             num_green_potions = result.num_green_potions
-        else: num_green_potions = 0
+        else: num_green_potions = []
 
     return [
             {
