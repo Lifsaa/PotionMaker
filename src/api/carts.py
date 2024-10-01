@@ -98,12 +98,12 @@ def create_cart(new_cart: Customer):
             num_green_potions = 0
             gold = 0  # Set a default value or handle as per your logic
         
-    if num_green_potions <= 0:
-        return {"error": "Insufficient potions available in inventory to create a cart"}
-    if gold < 5:
-        return {"error": "Insufficient gold to proceed"}
+        if num_green_potions <= 0:
+            return {"error": "Insufficient potions available in inventory to create a cart"}
+        if gold < 5:
+            return {"error": "Insufficient gold to proceed"}
 
-    return {"cart_id": 1}
+        return {"cart_id": 1}
 
 
 
