@@ -39,8 +39,8 @@ def get_wholesale_purchase_plan(wholesale_catalog: list[Barrel]):
         else:
             num_green_potions = [] 
             gold = 0               
-        if num_green_potions < 10 and gold >=5:
-            connection.execute(sqlalchemy.text("UPDATE global_inventory SET num_green_potions = num_green_potions+1, gold = gold-5 WHERE id = 1"))
+        if num_green_potions < 10 and gold >10:
+            connection.execute(sqlalchemy.text("UPDATE global_inventory SET num_green_potions = num_green_potions+1, gold = gold-10 WHERE id = 1"))
     
     if num_green_potions > 0:
         return [

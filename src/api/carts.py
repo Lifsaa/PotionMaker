@@ -138,7 +138,7 @@ def checkout(cart_id: int, cart_checkout: CartCheckout):
                 "UPDATE global_inventory SET num_green_potions = num_green_potions - 1 WHERE id = 1"
             ))
             total_potions_bought = 1
-            total_gold_paid = 5 
+            total_gold_paid = 10
         else:
             total_potions_bought = 0
             total_gold_paid = 0
