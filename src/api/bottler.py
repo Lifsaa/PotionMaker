@@ -43,7 +43,7 @@ def get_bottle_plan():
     if potions_created > 0:
         return [
             {
-                "potion_type": [0, 100, 0, 0],
+                "potion_type": [0, 1, 0, 0],
                 "quantity": potions_created,
             }
         ]
