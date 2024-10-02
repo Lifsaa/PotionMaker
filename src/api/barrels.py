@@ -46,9 +46,7 @@ def get_wholesale_purchase_plan(wholesale_catalog: list[Barrel]):
         return [
             {
                 "sku": "SMALL_GREEN_BARREL",
-                "potion_type": [0,1,0,0],
                 "quantity": num_green_potions,
-                "price": 10
             }
         ]
     else: return []
