@@ -48,7 +48,7 @@ def get_bottle_plan():
             }
         ]
     else:
-        return []
+        return {"potion_type":[0,0,0,0], "quantity":[]}
 
     # Each bottle has a quantity of what proportion of red, blue, and
     # green potion to add.
