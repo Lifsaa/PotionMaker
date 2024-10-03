@@ -32,7 +32,7 @@ def get_wholesale_purchase_plan(wholesale_catalog: list[Barrel]):
     """ """
     print(wholesale_catalog)
     with db.engine.begin() as connection:
-        res = connection.execute(sqlalchemy.text("SELECT num_green_potions,gold FROM global_inventory WHERE id = 1")).fetchone()
+        res = connection.execute(sqlalchemy.text("SELECT num_green_potions,gold FROM global_inventory WHERE id = 1")).fetchall()
         if res is not None:
             num_green_potions = res.num_green_potions
             gold = res.gold
@@ -41,7 +41,7 @@ def get_wholesale_purchase_plan(wholesale_catalog: list[Barrel]):
             gold = 0               
         if num_green_potions < 10 and gold >10:
             connection.execute(sqlalchemy.text("UPDATE global_inventory SET num_green_potions = num_green_potions+1, gold = gold-10 WHERE id = 1"))
-        
+    
     if num_green_potions > 0:
         return [
             {

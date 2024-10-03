@@ -26,7 +26,7 @@ def post_deliver_bottles(potions_delivered: list[PotionInventory], order_id: int
 @router.post("/plan")
 def get_bottle_plan():
     with db.engine.begin() as connection:
-        result = connection.execute(sqlalchemy.text("SELECT num_green_ml FROM global_inventory WHERE id = 1")).fetchone()
+        result = connection.execute(sqlalchemy.text("SELECT num_green_ml FROM global_inventory WHERE id = 1")).fetchall()
         if result is not None:
             num_green_ml = result.num_green_ml 
         else:
@@ -48,7 +48,7 @@ def get_bottle_plan():
             }
         ]
     else:
-        return {"potion_type":[0,0,0,0], "quantity":[]}
+        return []
 
     # Each bottle has a quantity of what proportion of red, blue, and
     # green potion to add.
