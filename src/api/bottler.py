@@ -19,7 +19,22 @@ class PotionInventory(BaseModel):
 @router.post("/deliver/{order_id}")
 def post_deliver_bottles(potions_delivered: list[PotionInventory], order_id: int):
     """ """
-    print(f"potions delievered: {potions_delivered} order_id: {order_id}")
+    print(f"potions delivered: {potions_delivered} order_id: {order_id}")
+
+    totalPotionsSQL ="SELECT num_green_potions FROM global_inventory"
+    with db.engine.begin() as connection:
+        total_potionsgrabber = connection.execute(sqlalchemy.text(totalPotionsSQL)).fetchone()
+        total_mlgrabber = connection.execute(sqlalchemy.text("SELECT num_green_ml FROM global_inventory")).fetchone()
+
+    total_potions = total_potionsgrabber.num_green_potions
+    total_ml = total_mlgrabber.num_green_ml
+    for potion in potions_delivered:
+        total_potions += potion.delivered
+        total_ml -= (100 * potion.quantity)
+
+    with db.engine.begin() as connection:
+        connection.execute(sqlalchemy.text(f"UPDATE global_inventory SET num_green_potions = {total_potions}"))
+        connection.execute(sqlalchemy.text(f"UPDATE global_inventory SET num_green_ml = {total_ml}"))
 
     return "OK"
 
@@ -27,19 +42,17 @@ def post_deliver_bottles(potions_delivered: list[PotionInventory], order_id: int
 def get_bottle_plan():
     with db.engine.begin() as connection:
         result = connection.execute(sqlalchemy.text("SELECT num_green_ml FROM global_inventory WHERE id = 1")).fetchall()
-        if result is not None:
-            num_green_ml = result.num_green_ml 
-        else:
-            num_green_ml = 0
-        potions_created = 0
-        remaining_ml = 0      
-        if num_green_ml > 0:
-            potions_created = num_green_ml // 100
-            remaining_ml = num_green_ml % 100
-            
-            connection.execute(sqlalchemy.text(
-                "UPDATE global_inventory SET num_green_ml = :remaining_ml, num_green_potions = num_green_potions + :potions_created WHERE id = 1"
-            ), {"remaining_ml": remaining_ml, "potions_created": potions_created})
+    num_green_ml = result.num_green_ml 
+    potions_created = 0
+    remaining_ml = 0      
+    if num_green_ml > 0:
+        potions_created = num_green_ml // 100
+        remaining_ml = num_green_ml % 100
+        
+    with db.engine.begin() as connection:
+        connection.execute(sqlalchemy.text(
+            "UPDATE global_inventory SET num_green_ml = :remaining_ml, num_green_potions = num_green_potions + :potions_created WHERE id = 1"
+        ), {"remaining_ml": remaining_ml, "potions_created": potions_created})
     if potions_created > 0:
         return [
             {

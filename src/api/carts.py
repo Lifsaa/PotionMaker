@@ -86,25 +86,14 @@ def post_visits(visit_id: int, customers: list[Customer]):
 
 
 @router.post("/")
-def create_cart(new_cart: Customer):
+def create_cart():
+    """Creates a new cart with default quantity (0) for a new customer"""
     with db.engine.begin() as connection:
-        result = connection.execute(sqlalchemy.text("SELECT num_green_potions, gold FROM global_inventory WHERE id = 1")).fetchone()
-        
-        # Check if result is None before accessing its attributes
-    if result is not None:
-        num_green_potions = result.num_green_potions
-        gold = result.gold
-    else:
-        num_green_potions = 0
-        gold = 0  # Set a default value or handle as per your logic
-    
-    if num_green_potions <= 0:
-        return {"error": "Insufficient potions available in inventory to create a cart"}
-    if gold < 10:
-        return {"error": "Insufficient gold to proceed"}
+        # Insert a new row with default values 
+        result = connection.execute("INSERT INTO cart_inventory DEFAULT VALUES RETURNING cart_id")
+        cart_id = result.fetchone()[0]  # new cart id from res
 
-    return {"cart_id": 1}
-
+    return {"cart_id": str(cart_id)}
 
 
 class CartItem(BaseModel):
@@ -114,15 +103,13 @@ class CartItem(BaseModel):
 @router.post("/{cart_id}/items/{item_sku}")
 def set_item_quantity(cart_id: int, item_sku: str, cart_item: CartItem):
     with db.engine.begin() as connection:
-        result = connection.execute(sqlalchemy.text("SELECT num_green_potions FROM global_inventory WHERE id = 1")).fetchall()
-        
-        # Correct the condition to check if result is not None
-    num_green_potions = result.num_green_potions if result is not None else 0
-    
-    if cart_item.quantity > num_green_potions:
+        result = connection.execute(sqlalchemy.text(f"SELECT cart_id FROM cart_inventory WHERE cart_id = {cart_id}")).fetchone()
+    cart_exists = result.cart_id 
+    if not cart_exists:
         return {"status":False}
-    else:
-        return {"status":True}
+    with db.engine.begin() as connection:
+        connection.execute(f"UPDATE cart_inventory SET quantity = {cart_item.quantity} WHERE cart_id = {cart_id}")        
+    return {"sucess":True}
 
 
 class CartCheckout(BaseModel):
@@ -131,19 +118,33 @@ class CartCheckout(BaseModel):
 @router.post("/{cart_id}/checkout")
 def checkout(cart_id: int, cart_checkout: CartCheckout):
      with db.engine.begin() as connection:
-        result = connection.execute(sqlalchemy.text("SELECT num_green_potions FROM global_inventory WHERE id = 1")).fetchall()
+        result = connection.execute(sqlalchemy.text("SELECT num_green_potions FROM global_inventory WHERE id = 1")).fetchone()
         num_green_potions = result.num_green_potions if result is not None else 0
+def checkout(cart_id: int, cart_checkout: CartCheckout):
+    """Handles the checkout process for a specific cart"""
+    with db.engine.begin() as connection:
+        result = connection.execute(f"SELECT quantity FROM cart_inventory WHERE cart_id = {cart_id}")
+        cart = result.fetchone()
+        if not cart:
+            return {"success": False, "message": 'Cart not found'}
 
-        if num_green_potions > 0:
-            connection.execute(sqlalchemy.text(
-                "UPDATE global_inventory SET num_green_potions = num_green_potions - 1 WHERE id = 1"
-            ))
-            total_potions_bought = 1
-            total_gold_paid = 10
-        else:
-            total_potions_bought = 0
-            total_gold_paid = 0
-        
-        if total_potions_bought > 0:
-            return [{"total_potions_bought": total_potions_bought, "total_gold_paid": total_gold_paid}]
-        else: return [{"total_potions_bought":0, "total_gold_paid":0}]
+        total_potions_bought = cart.quantity
+
+        result = connection.execute("SELECT num_green_potions, gold FROM global_inventory")
+        inventory = result.fetchone()
+
+        if inventory.num_green_potions < total_potions_bought:
+            return {"success": False, "message": "Not enough potions in inventory"}
+
+        # Update the global inventory
+        new_potion_inventory = inventory.num_green_potions - total_potions_bought
+        total_gold_paid = 25 * total_potions_bought  
+        new_gold = inventory.gold + total_gold_paid
+
+        connection.execute(f"UPDATE global_inventory SET num_green_potions = {new_potion_inventory}")
+        connection.execute(f"UPDATE global_inventory SET gold = {new_gold}")
+
+        #clearing cart after use
+        connection.execute(f"DELETE FROM cart_inventory WHERE cart_id = {cart_id}")
+
+    return {"total_potions_bought": total_potions_bought, "total_gold_paid": total_gold_paid}
