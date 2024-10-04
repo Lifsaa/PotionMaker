@@ -42,17 +42,13 @@ def post_deliver_bottles(potions_delivered: list[PotionInventory], order_id: int
 def get_bottle_plan():
     with db.engine.begin() as connection:
         result = connection.execute(sqlalchemy.text("SELECT num_green_ml FROM global_inventory WHERE id = 1")).fetchone()
-    num_green_ml = result.num_green_ml 
+    if result is None:
+        num_green_ml = 0
+    else:
+        num_green_ml = result.num_green_ml
     potions_created = 0
-    remaining_ml = 0      
     if num_green_ml > 0:
-        potions_created = num_green_ml // 100
-        remaining_ml = num_green_ml % 100
-        
-    with db.engine.begin() as connection:
-        connection.execute(sqlalchemy.text(
-            "UPDATE global_inventory SET num_green_ml = :remaining_ml, num_green_potions = num_green_potions + :potions_created WHERE id = 1"
-        ), {"remaining_ml": remaining_ml, "potions_created": potions_created})
+        potions_created = num_green_ml // 100        
     if potions_created > 0:
         return [
             {
@@ -60,8 +56,7 @@ def get_bottle_plan():
                 "quantity": potions_created,
             }
         ]
-    else:
-        return []
+    return []
 
     # Each bottle has a quantity of what proportion of red, blue, and
     # green potion to add.
