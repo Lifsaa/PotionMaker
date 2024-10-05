@@ -45,14 +45,12 @@ def get_wholesale_purchase_plan(wholesale_catalog: list[Barrel]):
         num_green_potions = res.num_green_potions
         gold = res.gold
     if num_green_potions < 10 and gold >50:    
-        return {
-         [
+        return[
             {
                 "sku": "SMALL_GREEN_BARREL",
                 "quantity": num_green_potions
             }
         ]
-        }
-    return {}
+    return []
 
    
