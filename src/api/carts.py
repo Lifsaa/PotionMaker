@@ -87,11 +87,11 @@ def post_visits(visit_id: int, customers: list[Customer]):
 
 @router.post("/")
 def create_cart():
-    """Creates a new cart with default quantity (0) for a new customer"""
+    default_quantity  =  0
+    sql_query = f"INSERT INTO cart_inventory (quantity) VALUES ({default_quantity}) RETURNING cart_id"
     with db.engine.begin() as connection:
-        # Insert a new row with default values 
-        result = connection.execute("INSERT INTO cart_inventory DEFAULT VALUES RETURNING cart_id")
-        cart_id = result.fetchone()[0]  # new cart id from res
+        res = connection.execute(sqlalchemy.text(sql_query))
+        cart_id = res.fetchone()[0]
 
     return {"cart_id": str(cart_id)}
 
@@ -103,13 +103,11 @@ class CartItem(BaseModel):
 @router.post("/{cart_id}/items/{item_sku}")
 def set_item_quantity(cart_id: int, item_sku: str, cart_item: CartItem):
     with db.engine.begin() as connection:
-        result = connection.execute(sqlalchemy.text(f"SELECT cart_id FROM cart_inventory WHERE cart_id = {cart_id}")).fetchone()
-    cart_exists = result.cart_id 
-    if not cart_exists:
-        return {"status":False}
-    with db.engine.begin() as connection:
-        connection.execute(f"UPDATE cart_inventory SET quantity = {cart_item.quantity} WHERE cart_id = {cart_id}")        
-    return {"sucess":True}
+        quantity = cart_item.quantity
+        connection.execute(f"UPDATE cart_inventory SET quantity = {quantity},cart_id ={cart_id}")       
+    if quantity:return {[{"cart_id":cart_id,"item_sku":item_sku,"quantity":quantity}]}
+    return {}
+
 
 
 class CartCheckout(BaseModel):
@@ -117,34 +115,29 @@ class CartCheckout(BaseModel):
 
 @router.post("/{cart_id}/checkout")
 def checkout(cart_id: int, cart_checkout: CartCheckout):
-     with db.engine.begin() as connection:
-        result = connection.execute(sqlalchemy.text("SELECT num_green_potions FROM global_inventory WHERE id = 1")).fetchone()
-        num_green_potions = result.num_green_potions if result is not None else 0
-def checkout(cart_id: int, cart_checkout: CartCheckout):
-    """Handles the checkout process for a specific cart"""
-    with db.engine.begin() as connection:
+      with db.engine.begin() as connection:
+        # Get cart quantity
         result = connection.execute(f"SELECT quantity FROM cart_inventory WHERE cart_id = {cart_id}")
         cart = result.fetchone()
         if not cart:
-            return {"success": False, "message": 'Cart not found'}
+            return {}
 
         total_potions_bought = cart.quantity
 
+        # Get the global inventory details
         result = connection.execute("SELECT num_green_potions, gold FROM global_inventory")
         inventory = result.fetchone()
 
-        if inventory.num_green_potions < total_potions_bought:
-            return {"success": False, "message": "Not enough potions in inventory"}
-
-        # Update the global inventory
+        # Calculate the new inventory and gold
         new_potion_inventory = inventory.num_green_potions - total_potions_bought
         total_gold_paid = 25 * total_potions_bought  
         new_gold = inventory.gold + total_gold_paid
 
+        # Update the global inventory
         connection.execute(f"UPDATE global_inventory SET num_green_potions = {new_potion_inventory}")
         connection.execute(f"UPDATE global_inventory SET gold = {new_gold}")
 
-        #clearing cart after use
+        # Clear the cart after checkout
         connection.execute(f"DELETE FROM cart_inventory WHERE cart_id = {cart_id}")
 
-    return {"total_potions_bought": total_potions_bought, "total_gold_paid": total_gold_paid}
+        return {"total_potions_bought": total_potions_bought, "total_gold_paid": total_gold_paid}
