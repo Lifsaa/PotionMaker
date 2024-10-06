@@ -21,8 +21,6 @@ def reset():
                                            num_red_potions  = 0,
                                            num_red_ml = 0,
                                            num_blue_ml  = 0,
-                                           num_dark_potions =0,
-                                           num_dark_ml = 0,
                                            gold = 100
                                            """  
                                            ))

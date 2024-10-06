@@ -26,24 +26,21 @@ def post_deliver_barrels(barrels_delivered: List[Barrel], order_id: int):
     with db.engine.begin() as connection:
         # Fetch all relevant potion amounts and gold from the inventory
         res = connection.execute(sqlalchemy.text("""
-            SELECT num_green_ml, num_red_ml, num_blue_ml, num_dark_ml, gold 
+            SELECT num_green_ml, num_red_ml, num_blue_ml, gold 
             FROM global_inventory
         """)).fetchone()
         
         total_green_ml = res.num_green_ml
         total_red_ml = res.num_red_ml
-        total_dark_ml = res.num_dark_ml
         total_blue_ml = res.num_blue_ml
         total_gold = res.gold
         
         for barrel in barrels_delivered:
-            if barrel.sku.upper() == "MINI_GREEN_BARREL":
+            if barrel.sku.upper() == "SMALL_GREEN_BARREL":
                 total_green_ml += barrel.ml_per_barrel
-            elif barrel.sku.upper() == "MINI_RED_BARREL":
+            elif barrel.sku.upper() == "SMALL_RED_BARREL":
                 total_red_ml += barrel.ml_per_barrel
-            elif barrel.sku.upper() == "MINI_DARK_BARREL":
-                total_dark_ml += barrel.ml_per_barrel
-            elif barrel.sku.upper() == "MINI_BLUE_BARREL":
+            elif barrel.sku.upper() == "SMALL_BLUE_BARREL":
                 total_blue_ml += barrel.ml_per_barrel
             
             # Deduct the price of each delivered barrel from the gold
@@ -53,8 +50,7 @@ def post_deliver_barrels(barrels_delivered: List[Barrel], order_id: int):
         connection.execute(sqlalchemy.text(f"""
             UPDATE global_inventory 
             SET num_green_ml = {total_green_ml}, 
-                num_red_ml = {total_red_ml}, 
-                num_dark_ml = {total_dark_ml}, 
+                num_red_ml = {total_red_ml},  
                 num_blue_ml = {total_blue_ml}, 
                 gold = {total_gold}
         """))
@@ -67,39 +63,31 @@ def get_wholesale_purchase_plan(wholesale_catalog: List[Barrel]):
     with db.engine.begin() as connection:
         # Fetch all potion counts and gold from global_inventory
         res = connection.execute(sqlalchemy.text("""
-            SELECT num_green_potions, num_red_potions, num_blue_potions, num_dark_potions, gold 
+            SELECT num_green_potions, num_red_potions, num_blue_potions, gold 
             FROM global_inventory
         """)).fetchone()
         
         num_green_potions = res.num_green_potions
         num_red_potions = res.num_red_potions
-        num_dark_potions = res.num_dark_potions
         num_blue_potions = res.num_blue_potions
         gold = res.gold            
         purchase_plan = []
         for barrel in wholesale_catalog:
-            if barrel.sku.upper() == "MINI_GREEN_BARREL" and num_green_potions < 10 and gold >= barrel.price:
+            if barrel.sku.upper() == "SMALL_GREEN_BARREL" and num_green_potions < 10 and gold >= barrel.price:
                 purchase_plan.append({
                     "sku": barrel.sku,
                     "quantity": 1 
                 })
                 gold -= barrel.price 
           
-            elif barrel.sku.upper() == "MINI_RED_BARREL" and num_red_potions < 10 and gold >= barrel.price:
+            elif barrel.sku.upper() == "SMALL_RED_BARREL" and num_red_potions < 10 and gold >= barrel.price:
                 purchase_plan.append({
                     "sku": barrel.sku,
                     "quantity": 1 
                 })
-                gold -= barrel.price  # Deduct the price from gold
+                gold -= barrel.price  
             
-            elif barrel.sku.upper() == "MINI_DARK_BARREL" and num_dark_potions < 10 and gold >= barrel.price:
-                purchase_plan.append({
-                    "sku": barrel.sku,
-                    "quantity": 1 
-                })
-                gold -= barrel.price  # Deduct the price from gold
-            
-            elif barrel.sku.upper() == "MINI_BLUE_BARREL" and num_blue_potions < 10 and gold >= barrel.price:
+            elif barrel.sku.upper() == "SMALL_BLUE_BARREL" and num_blue_potions < 10 and gold >= barrel.price:
                 purchase_plan.append({
                     "sku": barrel.sku,
                     "quantity": 1 

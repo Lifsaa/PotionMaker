@@ -14,13 +14,12 @@ def get_catalog():
     with db.engine.begin() as connection:
         # Fetch potion quantities from global_inventory
         result = connection.execute(sqlalchemy.text("""
-            SELECT num_green_potions, num_red_potions, num_dark_potions, num_blue_potions
+            SELECT num_green_potions, num_red_potions, num_blue_potions
             FROM global_inventory
         """)).fetchone()
 
     num_green_potions = result.num_green_potions
     num_red_potions = result.num_red_potions
-    num_dark_potions = result.num_dark_potions
     num_blue_potions = result.num_blue_potions
 
     catalog = []
@@ -30,7 +29,7 @@ def get_catalog():
             "sku": "GREEN_POTION_0",
             "name": "green potion",
             "quantity": num_green_potions,
-            "price": 25,
+            "price": 60,
             "potion_type": [0, 100, 0, 0],  
         })
 
@@ -39,16 +38,8 @@ def get_catalog():
             "sku": "RED_POTION_0",
             "name": "red potion",
             "quantity": num_red_potions,
-            "price": 30,
+            "price": 55,
             "potion_type": [100, 0, 0, 0],  #
-        })
-    if num_dark_potions > 0:
-        catalog.append({
-            "sku": "DARK_POTION_0",
-            "name": "dark potion",
-            "quantity": num_dark_potions,
-            "price": 40,
-            "potion_type": [0, 0, 100, 0],  
         })
 
     if num_blue_potions > 0:
@@ -57,7 +48,7 @@ def get_catalog():
             "name": "blue potion",
             "quantity": num_blue_potions,
             "price": 35,
-            "potion_type": [0, 0, 0, 100], 
+            "potion_type": [0, 0,100,], 
         })
 
     return catalog if catalog else []

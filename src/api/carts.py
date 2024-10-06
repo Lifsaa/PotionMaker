@@ -131,19 +131,17 @@ def checkout(cart_id: int, cart_checkout: CartCheckout):
         total_potions_bought = 0
         total_gold_paid = 0
         potion_prices = {
-            "GREEN_POTION": 25,
-            "RED_POTION": 30,
-            "DARK_POTION": 40,
+            "GREEN_POTION": 60,
+            "RED_POTION": 55,
             "BLUE_POTION": 35
         }
 
-        result = connection.execute("SELECT num_green_potions, num_red_potions, num_dark_potions, num_blue_potions, gold FROM global_inventory")
+        result = connection.execute("SELECT num_green_potions, num_red_potions, num_blue_potions, gold FROM global_inventory")
         inventory = result.fetchone()
 
         new_inventory = {
             "GREEN_POTION": inventory.num_green_potions,
             "RED_POTION": inventory.num_red_potions,
-            "DARK_POTION": inventory.num_dark_potions,
             "BLUE_POTION": inventory.num_blue_potions
         }
         new_gold = inventory.gold
@@ -164,7 +162,6 @@ def checkout(cart_id: int, cart_checkout: CartCheckout):
             UPDATE global_inventory 
             SET num_green_potions = {new_inventory['GREEN_POTION']}, 
                 num_red_potions = {new_inventory['RED_POTION']}, 
-                num_dark_potions = {new_inventory['DARK_POTION']}, 
                 num_blue_potions = {new_inventory['BLUE_POTION']},
                 gold = {new_gold}
         """)
