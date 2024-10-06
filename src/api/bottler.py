@@ -2,7 +2,6 @@ from fastapi import APIRouter, Depends
 from enum import Enum
 from pydantic import BaseModel
 from src.api import auth
-from typing import List
 import sqlalchemy
 from src import database as db
 
@@ -13,52 +12,108 @@ router = APIRouter(
 )
 
 class PotionInventory(BaseModel):
-    potion_type: list[int]
+    potion_type: list[int]  # Requires Python 3.9+
     quantity: int
 
 @router.post("/deliver/{order_id}")
 def post_deliver_bottles(potions_delivered: list[PotionInventory], order_id: int):
-    """ """
+    """Update the potion inventory based on delivered potions"""
     print(f"potions delivered: {potions_delivered} order_id: {order_id}")
 
-    totalPotionsSQL ="SELECT num_green_potions FROM global_inventory"
     with db.engine.begin() as connection:
-        total_potionsgrabber = connection.execute(sqlalchemy.text(totalPotionsSQL)).fetchone()
-        total_mlgrabber = connection.execute(sqlalchemy.text("SELECT num_green_ml FROM global_inventory")).fetchone()
+        # Fetch current potion counts and ml from the inventory
+        potion_data = connection.execute(sqlalchemy.text("""
+            SELECT num_green_potions, num_red_potions, num_dark_potions, num_blue_potions,
+                   num_green_ml, num_red_ml, num_dark_ml, num_blue_ml
+            FROM global_inventory
+        """)).fetchone()
 
-        total_potions = total_potionsgrabber.num_green_potions
-        total_ml = total_mlgrabber.num_green_ml
+
+        # Extract values from the fetched data
+        total_green_potions = potion_data.num_green_potions
+        total_red_potions = potion_data.num_red_potions
+        total_dark_potions = potion_data.num_dark_potions
+        total_blue_potions = potion_data.num_blue_potions
+        total_green_ml = potion_data.num_green_ml
+        total_red_ml = potion_data.num_red_ml
+        total_dark_ml = potion_data.num_dark_ml
+        total_blue_ml = potion_data.num_blue_ml
+
         for potion in potions_delivered:
-            total_potions += potion.delivered
-            total_ml -= (100 * potion.quantity)
-            
-        connection.execute(sqlalchemy.text(f"UPDATE global_inventory SET num_green_potions = {total_potions}"))
-        connection.execute(sqlalchemy.text(f"UPDATE global_inventory SET num_green_ml = {total_ml}"))
-    return "OK"
+            if potion.potion_type == [0, 100, 0, 0]:
+                # Green potion
+                total_green_potions += potion.quantity
+                total_green_ml -= (100 * potion.quantity)
+            elif potion.potion_type == [100, 0, 0, 0]:
+                # Red potion
+                total_red_potions += potion.quantity
+                total_red_ml -= (100 * potion.quantity)
+            elif potion.potion_type == [0, 0, 100, 0]:
+                # Dark potion
+                total_dark_potions += potion.quantity
+                total_dark_ml -= (100 * potion.quantity)
+            elif potion.potion_type == [0, 0, 0, 100]:
+                # Blue potion
+                total_blue_potions += potion.quantity
+                total_blue_ml -= (100 * potion.quantity)
+      
 
+        # Update the inventory with new values
+        connection.execute(sqlalchemy.text(f"""
+            UPDATE global_inventory 
+            SET num_green_potions = {total_green_potions}, 
+                num_red_potions = {total_red_potions}, 
+                num_dark_potions = {total_dark_potions}, 
+                num_blue_potions = {total_blue_potions},
+                num_green_ml = {total_green_ml}, 
+                num_red_ml = {total_red_ml}, 
+                num_dark_ml = {total_dark_ml},
+                num_blue_ml = {total_blue_ml}
+        """))
+
+    return "OK"
 
 @router.post("/plan")
 def get_bottle_plan():
     with db.engine.begin() as connection:
-        result = connection.execute(sqlalchemy.text("SELECT num_green_ml FROM global_inventory")).fetchone()
+        result = connection.execute(sqlalchemy.text("""
+            SELECT num_green_ml, num_red_ml, num_dark_ml, num_blue_ml
+            FROM global_inventory
+        """)).fetchone()
+
     num_green_ml = result.num_green_ml
-    potions_created = 0
-    if num_green_ml > 0:
-        potions_created = num_green_ml // 100        
-    if potions_created > 0:
-        return [
-            {
-                "potion_type": [0, 100, 0, 0],
-                "quantity": potions_created,
-            }
-        ]
-    return []
+    num_red_ml = result.num_red_ml
+    num_dark_ml = result.num_dark_ml
+    num_blue_ml = result.num_blue_ml
 
-    # Each bottle has a quantity of what proportion of red, blue, and
-    # green potion to add.
-    # Expressed in integers from 1 to 100 that must sum up to 100.
+    potions_created_green = num_green_ml // 100 if num_green_ml > 0 else 0
+    potions_created_red = num_red_ml // 100 if num_red_ml > 0 else 0
+    potions_created_dark = num_dark_ml // 100 if num_dark_ml > 0 else 0
+    potions_created_blue = num_blue_ml // 100 if num_blue_ml > 0 else 0
 
-    # Initial logic: bottle all barrels into red potions.
-        
+    potion_plan = []
+    if potions_created_green > 0:
+        potion_plan.append({
+            "potion_type": [0, 100, 0, 0],
+            "quantity": potions_created_green,
+        })
+    if potions_created_red > 0:
+        potion_plan.append({
+            "potion_type": [100, 0, 0, 0],
+            "quantity": potions_created_red,
+        })
+    if potions_created_dark > 0:
+        potion_plan.append({
+            "potion_type": [0, 0, 100, 0],
+            "quantity": potions_created_dark,
+        })
+    if potions_created_blue > 0:
+        potion_plan.append({
+            "potion_type": [0, 0, 0, 100],
+            "quantity": potions_created_blue,
+        })
+
+    return potion_plan if potion_plan else []
+
 if __name__ == "__main__":
     print(get_bottle_plan())

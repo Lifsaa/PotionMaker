@@ -4,6 +4,7 @@ from typing import List
 from src.api import auth
 import sqlalchemy
 from src import database as db
+
 router = APIRouter(
     prefix="/barrels",
     tags=["barrels"],
@@ -12,44 +13,98 @@ router = APIRouter(
 
 class Barrel(BaseModel):
     sku: str
-
     ml_per_barrel: int
-    potion_type: list[int]
+    potion_type: List[int]
     price: int
-
     quantity: int
 
 @router.post("/deliver/{order_id}")
-def post_deliver_barrels(barrels_delivered: list[Barrel], order_id: int):
-    """ """
-    print(f"barrels delievered: {barrels_delivered} order_id: {order_id}")
+def post_deliver_barrels(barrels_delivered: List[Barrel], order_id: int):
+    """Update the inventory based on delivered barrels"""
+    print(f"barrels delivered: {barrels_delivered} order_id: {order_id}")
+    
     with db.engine.begin() as connection:
-        res = connection.execute(sqlalchemy.text("SELECT num_green_ml,gold FROM global_inventory")).fetchone()
-        total_ml = res.num_green_ml
+        # Fetch all relevant potion amounts and gold from the inventory
+        res = connection.execute(sqlalchemy.text("""
+            SELECT num_green_ml, num_red_ml, num_blue_ml, num_dark_ml, gold 
+            FROM global_inventory
+        """)).fetchone()
+        
+        total_green_ml = res.num_green_ml
+        total_red_ml = res.num_red_ml
+        total_dark_ml = res.num_dark_ml
+        total_blue_ml = res.num_blue_ml
         total_gold = res.gold
-        cost = 0
+        
         for barrel in barrels_delivered:
-            total_ml += barrel.ml_per_barrel
-            cost = total_gold - barrel.price
-        print(f"Now barrel is {barrel}")
-        connection.execute(sqlalchemy.text(f"UPDATE global_inventory SET num_green_ml = {total_ml}, gold = {cost}"))
-    return "OK"
+            if barrel.sku.upper() == "MINI_GREEN_BARREL":
+                total_green_ml += barrel.ml_per_barrel
+            elif barrel.sku.upper() == "MINI_RED_BARREL":
+                total_red_ml += barrel.ml_per_barrel
+            elif barrel.sku.upper() == "MINI_DARK_BARREL":
+                total_dark_ml += barrel.ml_per_barrel
+            elif barrel.sku.upper() == "MINI_BLUE_BARREL":
+                total_blue_ml += barrel.ml_per_barrel
+            
+            # Deduct the price of each delivered barrel from the gold
+            total_gold -= barrel.price
+        
+        # Update the inventory with new potion amounts and gold
+        connection.execute(sqlalchemy.text(f"""
+            UPDATE global_inventory 
+            SET num_green_ml = {total_green_ml}, 
+                num_red_ml = {total_red_ml}, 
+                num_dark_ml = {total_dark_ml}, 
+                num_blue_ml = {total_blue_ml}, 
+                gold = {total_gold}
+        """))
+    
+    return "UPDATED inventory"
 
 # Gets called once a day
 @router.post("/plan")
-def get_wholesale_purchase_plan(wholesale_catalog: list[Barrel]): 
+def get_wholesale_purchase_plan(wholesale_catalog: List[Barrel]): 
     with db.engine.begin() as connection:
-        res = connection.execute(sqlalchemy.text("SELECT num_green_potions, gold FROM global_inventory")).fetchone()
+        # Fetch all potion counts and gold from global_inventory
+        res = connection.execute(sqlalchemy.text("""
+            SELECT num_green_potions, num_red_potions, num_blue_potions, num_dark_potions, gold 
+            FROM global_inventory
+        """)).fetchone()
+        
         num_green_potions = res.num_green_potions
+        num_red_potions = res.num_red_potions
+        num_dark_potions = res.num_dark_potions
+        num_blue_potions = res.num_blue_potions
         gold = res.gold            
+        purchase_plan = []
         for barrel in wholesale_catalog:
-            if barrel.sku.upper() == "SMALL_GREEN_BARREL" and num_green_potions < 10 and gold > barrel.price:
-                return [
-                    {
-                        "sku": barrel.sku,
-                        "quantity": 1 
-                    }
-                ]
-    return []
+            if barrel.sku.upper() == "MINI_GREEN_BARREL" and num_green_potions < 10 and gold >= barrel.price:
+                purchase_plan.append({
+                    "sku": barrel.sku,
+                    "quantity": 1 
+                })
+                gold -= barrel.price 
+          
+            elif barrel.sku.upper() == "MINI_RED_BARREL" and num_red_potions < 10 and gold >= barrel.price:
+                purchase_plan.append({
+                    "sku": barrel.sku,
+                    "quantity": 1 
+                })
+                gold -= barrel.price  # Deduct the price from gold
+            
+            elif barrel.sku.upper() == "MINI_DARK_BARREL" and num_dark_potions < 10 and gold >= barrel.price:
+                purchase_plan.append({
+                    "sku": barrel.sku,
+                    "quantity": 1 
+                })
+                gold -= barrel.price  # Deduct the price from gold
+            
+            elif barrel.sku.upper() == "MINI_BLUE_BARREL" and num_blue_potions < 10 and gold >= barrel.price:
+                purchase_plan.append({
+                    "sku": barrel.sku,
+                    "quantity": 1 
+                })
+                gold -= barrel.price  # Deduct the price from gold
+        return purchase_plan  # Return the purchase plan list
 
-   
+    return []

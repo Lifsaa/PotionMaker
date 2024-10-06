@@ -104,8 +104,14 @@ class CartItem(BaseModel):
 def set_item_quantity(cart_id: int, item_sku: str, cart_item: CartItem):
     with db.engine.begin() as connection:
         quantity = cart_item.quantity
-        connection.execute(f"UPDATE cart_inventory SET quantity = {quantity},cart_id ={cart_id}")       
-    if quantity:return {[{"cart_id":cart_id,"item_sku":item_sku,"quantity":quantity}]}
+        sql_query = sqlalchemy.text("""
+            UPDATE cart_inventory 
+            SET quantity = :quantity 
+            WHERE cart_id = :cart_id AND item_sku = :item_sku
+        """)
+        connection.execute(sql_query, {"quantity": quantity, "cart_id": cart_id, "item_sku": item_sku})
+    if quantity:
+        return [{"cart_id": cart_id, "item_sku": item_sku, "quantity": quantity}]
     return {}
 
 
@@ -113,31 +119,55 @@ def set_item_quantity(cart_id: int, item_sku: str, cart_item: CartItem):
 class CartCheckout(BaseModel):
     payment: str
 
-@router.post("/{cart_id}/checkout")
 def checkout(cart_id: int, cart_checkout: CartCheckout):
-      with db.engine.begin() as connection:
-        # Get cart quantity
-        result = connection.execute(f"SELECT quantity FROM cart_inventory WHERE cart_id = {cart_id}")
-        cart = result.fetchone()
-        if not cart:
+    with db.engine.begin() as connection:
+        # Get cart details (quantity of each item SKU)
+        result = connection.execute(f"SELECT item_sku, quantity FROM cart_inventory WHERE cart_id = {cart_id}")
+        cart_items = result.fetchall()
+
+        if not cart_items:
             return {}
 
-        total_potions_bought = cart.quantity
+        total_potions_bought = 0
+        total_gold_paid = 0
+        potion_prices = {
+            "GREEN_POTION": 25,
+            "RED_POTION": 30,
+            "DARK_POTION": 40,
+            "BLUE_POTION": 35
+        }
 
-        # Get the global inventory details
-        result = connection.execute("SELECT num_green_potions, gold FROM global_inventory")
+        result = connection.execute("SELECT num_green_potions, num_red_potions, num_dark_potions, num_blue_potions, gold FROM global_inventory")
         inventory = result.fetchone()
 
-        # Calculate the new inventory and gold
-        new_potion_inventory = inventory.num_green_potions - total_potions_bought
-        total_gold_paid = 25 * total_potions_bought  
-        new_gold = inventory.gold + total_gold_paid
+        new_inventory = {
+            "GREEN_POTION": inventory.num_green_potions,
+            "RED_POTION": inventory.num_red_potions,
+            "DARK_POTION": inventory.num_dark_potions,
+            "BLUE_POTION": inventory.num_blue_potions
+        }
+        new_gold = inventory.gold
 
-        # Update the global inventory
-        connection.execute(f"UPDATE global_inventory SET num_green_potions = {new_potion_inventory}")
-        connection.execute(f"UPDATE global_inventory SET gold = {new_gold}")
+        # Update inventory based on the items in the cart
+        for item in cart_items:
+            item_sku = item.item_sku.upper()
+            quantity = item.quantity
 
-        # Clear the cart after checkout
+            if item_sku in new_inventory:
+                new_inventory[item_sku] -= quantity
+                total_gold_paid += potion_prices[item_sku] * quantity
+                total_potions_bought += quantity
+
+        new_gold += total_gold_paid
+
+        connection.execute(f"""
+            UPDATE global_inventory 
+            SET num_green_potions = {new_inventory['GREEN_POTION']}, 
+                num_red_potions = {new_inventory['RED_POTION']}, 
+                num_dark_potions = {new_inventory['DARK_POTION']}, 
+                num_blue_potions = {new_inventory['BLUE_POTION']},
+                gold = {new_gold}
+        """)
         connection.execute(f"DELETE FROM cart_inventory WHERE cart_id = {cart_id}")
 
-        return {"total_potions_bought": total_potions_bought, "total_gold_paid": total_gold_paid}
+    return {"total_potions_bought": total_potions_bought, "total_gold_paid": total_gold_paid}
