@@ -24,7 +24,6 @@ def post_deliver_barrels(barrels_delivered: List[Barrel], order_id: int):
     print(f"barrels delivered: {barrels_delivered} order_id: {order_id}")
     
     with db.engine.begin() as connection:
-        # Fetch all relevant potion amounts and gold from the inventory
         res = connection.execute(sqlalchemy.text("""
             SELECT num_green_ml, num_red_ml, num_blue_ml, gold 
             FROM global_inventory
@@ -43,10 +42,8 @@ def post_deliver_barrels(barrels_delivered: List[Barrel], order_id: int):
             elif barrel.sku.upper() == "SMALL_BLUE_BARREL":
                 total_blue_ml += barrel.ml_per_barrel
             
-            # Deduct the price of each delivered barrel from the gold
             total_gold -= barrel.price
         
-        # Update the inventory with new potion amounts and gold
         connection.execute(sqlalchemy.text(f"""
             UPDATE global_inventory 
             SET num_green_ml = {total_green_ml}, 
@@ -61,7 +58,6 @@ def post_deliver_barrels(barrels_delivered: List[Barrel], order_id: int):
 @router.post("/plan")
 def get_wholesale_purchase_plan(wholesale_catalog: List[Barrel]): 
     with db.engine.begin() as connection:
-        # Fetch all potion counts and gold from global_inventory
         res = connection.execute(sqlalchemy.text("""
             SELECT num_green_potions, num_red_potions, num_blue_potions, gold 
             FROM global_inventory
@@ -92,7 +88,7 @@ def get_wholesale_purchase_plan(wholesale_catalog: List[Barrel]):
                     "sku": barrel.sku,
                     "quantity": 1 
                 })
-                gold -= barrel.price  # Deduct the price from gold
-        return purchase_plan  # Return the purchase plan list
+                gold -= barrel.price  
+        return purchase_plan 
 
     return []

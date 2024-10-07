@@ -92,8 +92,8 @@ def create_cart():
     with db.engine.begin() as connection:
         res = connection.execute(sqlalchemy.text(sql_query))
         cart_id = res.fetchone()[0]
-
-    return {"cart_id": str(cart_id)}
+        return {"cart_id": str(cart_id)}
+    return {}
 
 
 class CartItem(BaseModel):
@@ -110,8 +110,8 @@ def set_item_quantity(cart_id: int, item_sku: str, cart_item: CartItem):
             WHERE cart_id = :cart_id AND item_sku = :item_sku
         """)
         connection.execute(sql_query, {"quantity": quantity, "cart_id": cart_id, "item_sku": item_sku})
-    if quantity:
-        return [{"cart_id": cart_id, "item_sku": item_sku, "quantity": quantity}]
+        if quantity:
+            return {"cart_id": cart_id}
     return {}
 
 
@@ -119,15 +119,19 @@ def set_item_quantity(cart_id: int, item_sku: str, cart_item: CartItem):
 class CartCheckout(BaseModel):
     payment: str
 
+@router.post("/{cart_id}/checkout")
 def checkout(cart_id: int, cart_checkout: CartCheckout):
+    print(f"Payment is = {cart_checkout.payment} gold")
     with db.engine.begin() as connection:
-        # Get cart details (quantity of each item SKU)
-        result = connection.execute(f"SELECT item_sku, quantity FROM cart_inventory WHERE cart_id = {cart_id}")
+        result = connection.execute(
+            sqlalchemy.text(
+                "SELECT item_sku, quantity FROM cart_inventory WHERE cart_id = :cart_id"
+            ),
+            {"cart_id": cart_id}
+        )
         cart_items = result.fetchall()
-
         if not cart_items:
             return {}
-
         total_potions_bought = 0
         total_gold_paid = 0
         potion_prices = {
@@ -135,8 +139,11 @@ def checkout(cart_id: int, cart_checkout: CartCheckout):
             "RED_POTION": 55,
             "BLUE_POTION": 35
         }
-
-        result = connection.execute("SELECT num_green_potions, num_red_potions, num_blue_potions, gold FROM global_inventory")
+        result = connection.execute(
+            sqlalchemy.text(
+                "SELECT num_green_potions, num_red_potions, num_blue_potions, gold FROM global_inventory"
+            )
+        )
         inventory = result.fetchone()
 
         new_inventory = {
@@ -146,9 +153,8 @@ def checkout(cart_id: int, cart_checkout: CartCheckout):
         }
         new_gold = inventory.gold
 
-        # Update inventory based on the items in the cart
         for item in cart_items:
-            item_sku = item.item_sku.upper()
+            item_sku = item.item_sku
             quantity = item.quantity
 
             if item_sku in new_inventory:
@@ -157,14 +163,26 @@ def checkout(cart_id: int, cart_checkout: CartCheckout):
                 total_potions_bought += quantity
 
         new_gold += total_gold_paid
+        connection.execute(
+            sqlalchemy.text(
+                """
+                UPDATE global_inventory 
+                SET num_green_potions = :green_potions, 
+                    num_red_potions = :red_potions, 
+                    num_blue_potions = :blue_potions,
+                    gold = :gold
+                """
+            ),
+            {
+                "green_potions": new_inventory['GREEN_POTION'],
+                "red_potions": new_inventory['RED_POTION'],
+                "blue_potions": new_inventory['BLUE_POTION'],
+                "gold": new_gold
+            }
+        )
+        connection.execute(
+            sqlalchemy.text("DELETE FROM cart_inventory WHERE cart_id = :cart_id"),
+            {"cart_id": cart_id}
+        )
 
-        connection.execute(f"""
-            UPDATE global_inventory 
-            SET num_green_potions = {new_inventory['GREEN_POTION']}, 
-                num_red_potions = {new_inventory['RED_POTION']}, 
-                num_blue_potions = {new_inventory['BLUE_POTION']},
-                gold = {new_gold}
-        """)
-        connection.execute(f"DELETE FROM cart_inventory WHERE cart_id = {cart_id}")
-
-    return {"total_potions_bought": total_potions_bought, "total_gold_paid": total_gold_paid}
+        return {"total_potions_bought": total_potions_bought, "total_gold_paid": total_gold_paid}
