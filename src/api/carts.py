@@ -76,44 +76,44 @@ class Customer(BaseModel):
     level: int
 
 @router.post("/visits/{visit_id}")
-def post_visits(visit_id: int, customers: list[Customer]):
+def post_visits(visit_id: int, customers: List[Customer]):
     """
     Which customers visited the shop today?
     """
-    print(customers)
-
+    print(f"Visit ID: {visit_id}")
+    print("Customers:")
+    for customer in customers:
+        print(f"- {customer.customer_name}, Class: {customer.character_class}, Level: {customer.level}")
     return "OK"
 
 
+carts = {}
+next_cart_id = 1
+
 @router.post("/")
 def create_cart():
-    default_quantity  =  0
-    sql_query = f"INSERT INTO cart_inventory (quantity) VALUES ({default_quantity}) RETURNING cart_id"
-    with db.engine.begin() as connection:
-        res = connection.execute(sqlalchemy.text(sql_query))
-        cart_id = res.fetchone()[0]
-        return {"cart_id": str(cart_id)}
-    return {}
+    global next_cart_id
+    cart_id = next_cart_id
+    next_cart_id += 1
+    carts[cart_id] = {}
+    print(f"Created cart with ID: {cart_id}")
+    return {"cart_id": cart_id}
 
 
 class CartItem(BaseModel):
     quantity: int
 
-
 @router.post("/{cart_id}/items/{item_sku}")
 def set_item_quantity(cart_id: int, item_sku: str, cart_item: CartItem):
-    with db.engine.begin() as connection:
-        quantity = cart_item.quantity
-        sql_query = sqlalchemy.text("""
-            UPDATE cart_inventory 
-            SET quantity = :quantity 
-            WHERE cart_id = :cart_id AND item_sku = :item_sku
-        """)
-        connection.execute(sql_query, {"quantity": quantity, "cart_id": cart_id, "item_sku": item_sku})
-        if quantity:
-            return {"cart_id": cart_id}
-    return {}
-
+    if cart_id not in carts:
+        return {"error": "Cart not found"}
+    quantity = cart_item.quantity
+    carts[cart_id][item_sku] = quantity
+    if quantity:
+        print(f"Great! now the potion quantity is {quantity}") 
+    else:
+        print("No change was made")
+    return {"success": True}
 
 
 class CartCheckout(BaseModel):
@@ -122,23 +122,19 @@ class CartCheckout(BaseModel):
 @router.post("/{cart_id}/checkout")
 def checkout(cart_id: int, cart_checkout: CartCheckout):
     print(f"Payment is = {cart_checkout.payment} gold")
+    if cart_id not in carts:
+        return {"error": "Cart not found"}
+    cart_items = carts[cart_id]
+    if not cart_items:
+        return {}
+    total_potions_bought = 0
+    total_gold_paid = 0
+    potion_prices = {
+        "GREEN_POTION": 60,
+        "RED_POTION": 55,
+        "BLUE_POTION": 35
+    }
     with db.engine.begin() as connection:
-        result = connection.execute(
-            sqlalchemy.text(
-                "SELECT item_sku, quantity FROM cart_inventory WHERE cart_id = :cart_id"
-            ),
-            {"cart_id": cart_id}
-        )
-        cart_items = result.fetchall()
-        if not cart_items:
-            return {}
-        total_potions_bought = 0
-        total_gold_paid = 0
-        potion_prices = {
-            "GREEN_POTION": 60,
-            "RED_POTION": 55,
-            "BLUE_POTION": 35
-        }
         result = connection.execute(
             sqlalchemy.text(
                 "SELECT num_green_potions, num_red_potions, num_blue_potions, gold FROM global_inventory"
@@ -153,10 +149,7 @@ def checkout(cart_id: int, cart_checkout: CartCheckout):
         }
         new_gold = inventory.gold
 
-        for item in cart_items:
-            item_sku = item.item_sku
-            quantity = item.quantity
-
+        for item_sku, quantity in cart_items.items():
             if item_sku in new_inventory:
                 new_inventory[item_sku] -= quantity
                 total_gold_paid += potion_prices[item_sku] * quantity
@@ -180,9 +173,6 @@ def checkout(cart_id: int, cart_checkout: CartCheckout):
                 "gold": new_gold
             }
         )
-        connection.execute(
-            sqlalchemy.text("DELETE FROM cart_inventory WHERE cart_id = :cart_id"),
-            {"cart_id": cart_id}
-        )
+    del carts[cart_id]
+    return {"total_potions_bought": total_potions_bought, "total_gold_paid": total_gold_paid}
 
-        return {"total_potions_bought": total_potions_bought, "total_gold_paid": total_gold_paid}
