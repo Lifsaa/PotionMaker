@@ -108,7 +108,8 @@ def set_item_quantity(cart_id: int, item_sku: str, cart_item: CartItem):
     if cart_id not in carts:
         return {"error": "Cart not found"}
     quantity = cart_item.quantity
-    carts[cart_id][item_sku] = quantity
+    item_key = item_sku.upper()
+    carts[cart_id][item_key] = quantity
     if quantity:
         print(f"Great! now the potion quantity is {quantity}") 
     else:
@@ -150,9 +151,10 @@ def checkout(cart_id: int, cart_checkout: CartCheckout):
         new_gold = inventory.gold
 
         for item_sku, quantity in cart_items.items():
-            if item_sku in new_inventory:
-                new_inventory[item_sku] -= quantity
-                total_gold_paid += potion_prices[item_sku] * quantity
+            item_key = item_sku.upper()
+            if item_key in new_inventory:
+                new_inventory[item_key] -= quantity
+                total_gold_paid += potion_prices[item_key] * quantity
                 total_potions_bought += quantity
 
         new_gold += total_gold_paid
