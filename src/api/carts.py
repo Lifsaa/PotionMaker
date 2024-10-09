@@ -123,18 +123,22 @@ class CartCheckout(BaseModel):
 @router.post("/{cart_id}/checkout")
 def checkout(cart_id: int, cart_checkout: CartCheckout):
     print(f"Payment is = {cart_checkout.payment} gold")
+
     if cart_id not in carts:
         return {"error": "Cart not found"}
+
     cart_items = carts[cart_id]
     if not cart_items:
-        return {}
+        return {"error": "Cart is empty"}
+
     total_potions_bought = 0
     total_gold_paid = 0
     potion_prices = {
-        "GREEN_POTION": 60,
-        "RED_POTION": 45,
-        "BLUE_POTION": 35
+        "GREEN_POTIONS_0": 60,
+        "RED_POTIONS_0": 45,
+        "BLUE_POTIONS_0": 35
     }
+    
     with db.engine.begin() as connection:
         result = connection.execute(
             sqlalchemy.text(
@@ -144,20 +148,23 @@ def checkout(cart_id: int, cart_checkout: CartCheckout):
         inventory = result.fetchone()
 
         new_inventory = {
-            "GREEN_POTION": inventory.num_green_potions,
-            "RED_POTION": inventory.num_red_potions,
-            "BLUE_POTION": inventory.num_blue_potions
+            "GREEN_POTIONS_0": inventory.num_green_potions,
+            "RED_POTIONS_0": inventory.num_red_potions,
+            "BLUE_POTIONS_0": inventory.num_blue_potions
         }
         new_gold = inventory.gold
 
         for item_sku, quantity in cart_items.items():
-            item_key = item_sku.upper()
-            if item_key in new_inventory:
-                new_inventory[item_key] -= quantity
-                total_gold_paid += potion_prices[item_key] * quantity
-                total_potions_bought += quantity
+            if item_sku in new_inventory and item_sku in potion_prices:
+                if new_inventory[item_sku] < quantity:
+                    return {"error": f"Not enough inventory for {item_sku}"}
 
-        new_gold += total_gold_paid
+                new_inventory[item_sku] -= quantity
+                total_gold_paid += potion_prices[item_sku] * quantity
+                total_potions_bought += quantity
+            else:
+                return {"error": f"Invalid item SKU: {item_sku}"}
+
         connection.execute(
             sqlalchemy.text(
                 """
@@ -169,12 +176,19 @@ def checkout(cart_id: int, cart_checkout: CartCheckout):
                 """
             ),
             {
-                "green_potions": new_inventory['GREEN_POTION'],
-                "red_potions": new_inventory['RED_POTION'],
-                "blue_potions": new_inventory['BLUE_POTION'],
-                "gold": new_gold
+                "green_potions": new_inventory['GREEN_POTIONS_0'],
+                "red_potions": new_inventory['RED_POTIONS_0'],
+                "blue_potions": new_inventory['BLUE_POTIONS_0'],
+                "gold": new_gold + total_gold_paid
             }
         )
+
+    # Remove the cart after successful checkout
     del carts[cart_id]
-    return {"total_potions_bought": total_potions_bought, "total_gold_paid": total_gold_paid}
+
+    return {
+        "total_potions_bought": total_potions_bought,
+        "total_gold_paid": total_gold_paid
+    }
+    
 
