@@ -131,7 +131,7 @@ def checkout(cart_id: int, cart_checkout: CartCheckout):
     total_gold_paid = 0
     potion_prices = {
         "GREEN_POTION": 60,
-        "RED_POTION": 55,
+        "RED_POTION": 45,
         "BLUE_POTION": 35
     }
     with db.engine.begin() as connection:
