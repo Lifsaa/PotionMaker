@@ -39,10 +39,10 @@ def post_deliver_bottles(potions_delivered: list[PotionInventory], order_id: int
             if potion.potion_type == [0, 100, 0, 0]:
                 total_green_potions += potion.quantity
                 total_green_ml -= (100 * potion.quantity)
-            elif potion.potion_type == [100, 0, 0, 0]:
+            if potion.potion_type == [100, 0, 0, 0]:
                 total_red_potions += potion.quantity
                 total_red_ml -= (100 * potion.quantity)
-            elif potion.potion_type == [0, 0, 100, 0]:
+            if potion.potion_type == [0, 0, 100, 0]:
                 total_blue_potions += potion.quantity
                 total_blue_ml -= (100 * potion.quantity)
       
@@ -88,7 +88,7 @@ def get_bottle_plan():
  
     if potions_created_blue > 0:
         potion_plan.append({
-            "potion_type": [0, 0, 0, 100],
+            "potion_type": [0, 0, 100,0],
             "quantity": potions_created_blue,
         })
 
