@@ -35,15 +35,14 @@ def post_deliver_barrels(barrels_delivered: List[Barrel], order_id: int):
         total_gold = res.gold
         
         for barrel in barrels_delivered:
-            if barrel.sku.upper() == "SMALL_GREEN_BARREL":
+            if barrel.potion_type == [0, 1, 0, 0]:  
                 total_green_ml += barrel.ml_per_barrel
-            elif barrel.sku.upper() == "SMALL_RED_BARREL":
+            elif barrel.potion_type == [1, 0, 0, 0]:  
                 total_red_ml += barrel.ml_per_barrel
-            elif barrel.sku.upper() == "SMALL_BLUE_BARREL":
+            elif barrel.potion_type == [0, 0, 1, 0]:  
                 total_blue_ml += barrel.ml_per_barrel
-            
             total_gold -= barrel.price
-        
+
         connection.execute(sqlalchemy.text(f"""
             UPDATE global_inventory 
             SET num_green_ml = {total_green_ml}, 
@@ -68,27 +67,35 @@ def get_wholesale_purchase_plan(wholesale_catalog: List[Barrel]):
         num_blue_potions = res.num_blue_potions
         gold = res.gold            
         purchase_plan = []
+       
         for barrel in wholesale_catalog:
-            if barrel.sku.upper() == "SMALL_GREEN_BARREL" and num_green_potions < 10 and gold >= barrel.price:
-                purchase_plan.append({
-                    "sku": barrel.sku,
-                    "quantity": 1 
-                })
-                gold -= barrel.price 
-          
-            if barrel.sku.upper() == "SMALL_RED_BARREL" and num_red_potions < 10 and gold >= barrel.price:
-                purchase_plan.append({
-                    "sku": barrel.sku,
-                    "quantity": 1 
-                })
-                gold -= barrel.price  
-            
-            if barrel.sku.upper() == "SMALL_BLUE_BARREL" and num_blue_potions < 10 and gold >= barrel.price:
-                purchase_plan.append({
-                    "sku": barrel.sku,
-                    "quantity": 1 
-                })
-                gold -= barrel.price  
-        return purchase_plan 
+            if gold < barrel.price:  
+                continue
 
+            if barrel.sku.upper().startswith("LARGE"):
+                if barrel.potion_type == [1, 0, 0, 0] and num_red_potions < 30:  
+                    purchase_plan.append({"sku": barrel.sku, "quantity": 1})
+                    gold -= barrel.price
+                
+                elif barrel.potion_type == [0, 1, 0, 0] and num_green_potions < 30:  
+                    purchase_plan.append({"sku": barrel.sku, "quantity": 1})
+                    gold -= barrel.price
+                
+                elif barrel.potion_type == [0, 0, 1, 0] and num_blue_potions < 20:  
+                    purchase_plan.append({"sku": barrel.sku, "quantity": 1})
+                    gold -= barrel.price
+
+            elif barrel.sku.upper() == "SMALL_GREEN_BARREL" and num_green_potions < 10:
+                purchase_plan.append({"sku": barrel.sku, "quantity": 1})
+                gold -= barrel.price
+
+            elif barrel.sku.upper() == "SMALL_RED_BARREL" and num_red_potions < 10:
+                purchase_plan.append({"sku": barrel.sku, "quantity": 1})
+                gold -= barrel.price
+
+            elif barrel.sku.upper() == "SMALL_BLUE_BARREL" and num_blue_potions < 10:
+                purchase_plan.append({"sku": barrel.sku, "quantity": 1})
+                gold -= barrel.price
+
+        return purchase_plan
     return []
