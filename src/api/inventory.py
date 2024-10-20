@@ -16,14 +16,12 @@ def get_inventory():
     Audit the current inventory, including total number of potions, ml in barrels, and available gold.
     """
     with db.engine.begin() as connection:
-        # Fetch ml and potion counts from global_inventory
         inventory = connection.execute(sqlalchemy.text("""
             SELECT num_red_potions, num_green_potions, num_blue_potions, num_dark_potions,
                    num_red_ml, num_green_ml, num_blue_ml, num_dark_ml, gold
             FROM global_inventory
         """)).fetchone()
 
-        # Fetch the inventory of custom potions from potion_catalog
         custom_potions = connection.execute(sqlalchemy.text("""
             SELECT SUM(inventory) AS total_custom_potions,
                    SUM(red_component * inventory) AS red_ml,
@@ -33,14 +31,12 @@ def get_inventory():
             FROM potion_catalog
         """)).fetchone()
 
-        # Calculate the total number of potions (including custom ones)
         total_potions = (
             inventory.num_red_potions + inventory.num_green_potions +
             inventory.num_blue_potions + inventory.num_dark_potions +
             custom_potions.total_custom_potions
         )
 
-        # Calculate total ml in barrels (including custom potion ml)
         total_ml = (
             inventory.num_red_ml + inventory.num_green_ml +
             inventory.num_blue_ml + inventory.num_dark_ml +
@@ -72,7 +68,6 @@ def get_capacity_plan():
             SELECT gold FROM global_inventory
         """)).fetchone()
 
-        # Calculate how many additional units can be bought with available gold
         total_capacity_units = (inventory.gold // cost_per_capacity)
 
         return {
@@ -103,7 +98,6 @@ def deliver_capacity_plan(capacity_purchase: CapacityPurchase, order_id: int):
         if inventory.gold < total_cost:
             return {"error": "Not enough gold to purchase the capacity"}
 
-        # Deduct the gold
         new_gold = inventory.gold - total_cost
         connection.execute(sqlalchemy.text("""
             UPDATE global_inventory SET gold = :gold

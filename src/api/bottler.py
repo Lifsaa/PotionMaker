@@ -23,7 +23,6 @@ def post_deliver_bottles(potions_delivered: list[PotionInventory], order_id: int
     Handles both pure and custom potions.
     """
     with db.engine.begin() as connection:
-        # Fetch ml from global_inventory
         global_inventory = connection.execute(sqlalchemy.text("""
             SELECT num_red_ml, num_green_ml, num_blue_ml, num_dark_ml
             FROM global_inventory
@@ -37,7 +36,6 @@ def post_deliver_bottles(potions_delivered: list[PotionInventory], order_id: int
         }
 
         for potion in potions_delivered:
-            # Dynamically fetch the potion recipe from potion_catalog
             potion_recipe = connection.execute(sqlalchemy.text("""
                 SELECT red_component, green_component, blue_component, dark_component, inventory
                 FROM potion_catalog
@@ -52,13 +50,11 @@ def post_deliver_bottles(potions_delivered: list[PotionInventory], order_id: int
             if not potion_recipe:
                 return {"error": f"Invalid potion mix {potion.potion_type}"}
 
-            # Deduct ml from global inventory
             inventory["red_ml"] -= potion_recipe.red_component * potion.quantity
             inventory["green_ml"] -= potion_recipe.green_component * potion.quantity
             inventory["blue_ml"] -= potion_recipe.blue_component * potion.quantity
             inventory["dark_ml"] -= potion_recipe.dark_component * potion.quantity
 
-            # Update the potion inventory in potion_catalog (for custom potions like Lumiere)
             new_inventory = potion_recipe.inventory + potion.quantity
             connection.execute(sqlalchemy.text("""
                 UPDATE potion_catalog
@@ -72,7 +68,6 @@ def post_deliver_bottles(potions_delivered: list[PotionInventory], order_id: int
                 "dark": potion.potion_type[3]
             })
 
-        # Update global inventory ml counts
         connection.execute(sqlalchemy.text("""
             UPDATE global_inventory
             SET num_red_ml = :red_ml, num_green_ml = :green_ml, num_blue_ml = :blue_ml, num_dark_ml = :dark_ml
@@ -88,7 +83,6 @@ def get_bottle_plan():
     Supports custom potion types dynamically.
     """
     with db.engine.begin() as connection:
-        # Fetch available ml from global_inventory
         global_inventory = connection.execute(sqlalchemy.text("""
             SELECT num_red_ml, num_green_ml, num_blue_ml, num_dark_ml
             FROM global_inventory
@@ -101,7 +95,6 @@ def get_bottle_plan():
             "dark_ml": global_inventory.num_dark_ml
         }
 
-        # Fetch all potion recipes
         potion_recipes = connection.execute(sqlalchemy.text("""
             SELECT id, red_component, green_component, blue_component, dark_component
             FROM potion_catalog
@@ -109,14 +102,12 @@ def get_bottle_plan():
 
         potion_plan = []
 
-        # Plan how many potions can be made for each recipe based on available ml
         for recipe in potion_recipes:
             red_ml_required = recipe.red_component
             green_ml_required = recipe.green_component
             blue_ml_required = recipe.blue_component
             dark_ml_required = recipe.dark_component
 
-            # Calculate how many potions can be made based on available ml
             max_potions = min(
                 inventory["red_ml"] // red_ml_required if red_ml_required > 0 else float('inf'),
                 inventory["green_ml"] // green_ml_required if green_ml_required > 0 else float('inf'),

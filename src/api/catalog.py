@@ -20,10 +20,9 @@ def get_catalog():
         """))
         
         for row in result:
-            # Infer potion_type from the component fields
+            if row.inventory < 1 or row.price < 1: return []
             potion_type = [row.red_component, row.green_component, row.blue_component, row.dark_component]
 
-            # Append the potion data to the catalog
             catalog.append({
                 "sku": row.sku,
                 "quantity": row.inventory,
