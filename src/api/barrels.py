@@ -86,19 +86,15 @@ def get_wholesale_purchase_plan(wholesale_catalog: List[Barrel]):
             potion_details = connection.execute(sqlalchemy.text("""
                 SELECT red_component, green_component, blue_component, dark_component
                 FROM potion_catalog
-                WHERE sku = :sku
-            """), {"sku": barrel.sku}).fetchone()
+            """)).fetchone()
             if potion_details is None:
                 continue
-
-
             red_component = potion_details.red_component
             green_component = potion_details.green_component
             blue_component = potion_details.blue_component
 
             if gold < barrel.price:
                 continue
-
             if red_component > 0 and num_red_potions < 10:
                 purchase_plan.append({"sku": barrel.sku, "quantity": 1})
                 gold -= barrel.price
@@ -108,5 +104,7 @@ def get_wholesale_purchase_plan(wholesale_catalog: List[Barrel]):
             elif blue_component > 0 and num_blue_potions < 10:
                 purchase_plan.append({"sku": barrel.sku, "quantity": 1})
                 gold -= barrel.price
-
+        
+        print(f"Barrel plan: ${purchase_plan}")
+        print(f"Gold after: {gold}")
         return purchase_plan
