@@ -13,13 +13,6 @@ CREATE TABLE potion_catalog (
     UNIQUE (red_component, green_component, blue_component, dark_component)
 );
 
-INSERT INTO potion_catalog (name, red_component, green_component, blue_component, dark_component)
-VALUES 
-('Lumiere Potion',50, 25,25,0),
-('Cyan Potion', 0, 50, 50, 0),
-('Crimson Potion', 75, 25, 0,0),
-('Pure Green Potion', 0, 100, 0, 0),
-('Pure Red Potion', 100, 0, 0, 0);
 
 CREATE TABLE global_inventory (
     id SERIAL PRIMARY KEY,
