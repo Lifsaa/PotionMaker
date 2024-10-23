@@ -75,15 +75,13 @@ class Customer(BaseModel):
     character_class: str
     level: int
 
-
 @router.post("/visits/{visit_id}")
 def post_visits(visit_id: int, customers: List[Customer]):
     """
     Log customer visits and save them to the customer_info table if they don't already exist.
     """
     print(f"Visit ID: {visit_id}")
-    with db.engine.begin() as connection:
-       """
+    """
     Which customers visited the shop today?
     """
     print(customers)
