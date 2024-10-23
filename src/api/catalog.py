@@ -20,7 +20,7 @@ def get_catalog():
         """))
         
         for row in result:
-            if row.inventory < 1 or row.price < 1: return []
+            if row.inventory < 1 or row.price < 1: continue
             potion_type = [row.red_component, row.green_component, row.blue_component, row.dark_component]
 
             catalog.append({
