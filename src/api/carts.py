@@ -106,101 +106,77 @@ def create_cart():
 
 
 
-@router.post("/{cart_id}/items/{catalog_id}")
-def set_item_quantity(cart_id: int, catalog_id: int, cart_item: CartItem):
+@router.post("/{cart_id}/items/{item_sku}")
+def set_item_quantity(cart_id: int, item_sku: str, cart_item: CartItem):
     """
-    Add or update an item in the cart by setting its quantity.
+    Updates the quantity of a specific item in the cart.
     """
     with db.engine.begin() as connection:
-        sku = connection.execute(sqlalchemy.text("""
-            SELECT sku FROM potion_catalog WHERE id = :catalog_id
-        """), {"catalog_id": catalog_id}).fetchone().sku
+        catalog_item = connection.execute(sqlalchemy.text("""
+            SELECT id, inventory FROM potion_catalog WHERE sku = :item_sku
+        """), {"item_sku": item_sku}).fetchone()
 
-        connection.execute(
-            sqlalchemy.text("""
+        if catalog_item is None:
+            return {"error": "Item not found in catalog."}
+
+        catalog_id = catalog_item.id
+
+        existing_item = connection.execute(sqlalchemy.text("""
+            SELECT quantity FROM carts_items
+            WHERE cart_id = :cart_id AND catalog_id = :catalog_id
+        """), {"cart_id": cart_id, "catalog_id": catalog_id}).fetchone()
+
+        if existing_item:
+            connection.execute(sqlalchemy.text("""
+                UPDATE carts_items
+                SET quantity = :quantity
+                WHERE cart_id = :cart_id AND catalog_id = :catalog_id
+            """), {"quantity": cart_item.quantity, "cart_id": cart_id, "catalog_id": catalog_id})
+        else:
+            connection.execute(sqlalchemy.text("""
                 INSERT INTO carts_items (cart_id, catalog_id, quantity, sku)
-                VALUES (:cart_id, :catalog_id, :quantity, :sku)
-                ON CONFLICT (cart_id, catalog_id)
-                DO UPDATE SET quantity = :quantity
-            """),
-            {"cart_id": cart_id, "catalog_id": catalog_id, "quantity": cart_item.quantity, "sku": sku}
-        )
-
+                VALUES (:cart_id, :catalog_id, :quantity, :item_sku)
+            """), {"cart_id": cart_id, "catalog_id": catalog_id, "quantity": cart_item.quantity, "item_sku": item_sku})
     return {"success": True}
-
 
 
 
 class CartCheckout(BaseModel):
     payment: str
 
-
 @router.post("/{cart_id}/checkout")
 def checkout(cart_id: int, cart_checkout: CartCheckout):
     """
-    Process the cart checkout, deduct potion inventory from potion_catalog, and finalize the cart.
+    Process the cart checkout, deduct potion inventory from potion_catalog, update gold, and finalize the cart.
     """
     with db.engine.begin() as connection:
         cart_items = connection.execute(sqlalchemy.text("""
-            SELECT ci.quantity, c.sku, c.price, c.inventory, c.red_component, c.green_component, c.blue_component, c.dark_component
+            SELECT ci.quantity, c.sku, c.price, c.inventory
             FROM carts_items ci
             JOIN potion_catalog c ON ci.catalog_id = c.id
             WHERE ci.cart_id = :cart_id
         """), {"cart_id": cart_id}).fetchall()
 
+        if not cart_items:
+            return {"error": "Cart is empty"}
+
         print(f"Cart ID: {cart_id}")
         for item in cart_items:
             print(f"Potion SKU: {item.sku}, Quantity: {item.quantity}, Inventory: {item.inventory}, Price: {item.price}")
-            print(f"Potion Components - Red: {item.red_component}, Green: {item.green_component}, Blue: {item.blue_component}, Dark: {item.dark_component}")
-
-        inventory = connection.execute(sqlalchemy.text("""
-            SELECT num_red_ml, num_green_ml, num_blue_ml, num_dark_ml, gold
-            FROM global_inventory
-        """)).fetchone()
-
-        print(f"Global Inventory - Red ML: {inventory.num_red_ml}, Green ML: {inventory.num_green_ml}, Blue ML: {inventory.num_blue_ml}, Dark ML: {inventory.num_dark_ml}")
-        print(f"Gold: {inventory.gold}")
 
         total_gold_paid = 0
-
         for item in cart_items:
             quantity = item.quantity
-            red_ml_needed = item.red_component * quantity
-            green_ml_needed = item.green_component * quantity
-            blue_ml_needed = item.blue_component * quantity
-            dark_ml_needed = item.dark_component * quantity
-
-            if (inventory.num_red_ml < red_ml_needed or
-                inventory.num_green_ml < green_ml_needed or
-                inventory.num_blue_ml < blue_ml_needed or
-                inventory.num_dark_ml < dark_ml_needed):
-                print(f"Insufficient ml inventory for potion {item.sku}")
-                return {"error": f"Insufficient ml inventory for potion {item.sku}"}
-
             if item.inventory < quantity:
                 print(f"Insufficient potion inventory for {item.sku}, Available: {item.inventory}, Needed: {quantity}")
                 return {"error": f"Insufficient potion inventory for {item.sku}"}
-
             total_gold_paid += item.price * quantity
 
-        if int(cart_checkout.payment) != total_gold_paid:
-            print(f"Incorrect payment: Received {cart_checkout.payment}, Expected {total_gold_paid}")
-            return {"error": "Incorrect payment amount"}
+        global_inventory = connection.execute(sqlalchemy.text("""
+            SELECT gold FROM global_inventory WHERE id = 1
+        """)).fetchone()
 
-        connection.execute(sqlalchemy.text("""
-            UPDATE global_inventory
-            SET num_red_ml = num_red_ml - :red_ml,
-                num_green_ml = num_green_ml - :green_ml,
-                num_blue_ml = num_blue_ml - :blue_ml,
-                num_dark_ml = num_dark_ml - :dark_ml,
-                gold = gold + :gold
-        """), {
-            "red_ml": sum(item.red_component * item.quantity for item in cart_items),
-            "green_ml": sum(item.green_component * item.quantity for item in cart_items),
-            "blue_ml": sum(item.blue_component * item.quantity for item in cart_items),
-            "dark_ml": sum(item.dark_component * item.quantity for item in cart_items),
-            "gold": total_gold_paid
-        })
+        current_gold = global_inventory.gold
 
         for item in cart_items:
             connection.execute(sqlalchemy.text("""
@@ -208,6 +184,14 @@ def checkout(cart_id: int, cart_checkout: CartCheckout):
                 SET inventory = inventory - :quantity
                 WHERE sku = :sku
             """), {"quantity": item.quantity, "sku": item.sku})
+            
+
+        new_gold = current_gold + total_gold_paid
+        connection.execute(sqlalchemy.text("""
+            UPDATE global_inventory
+            SET gold = :new_gold, last_updated = CURRENT_TIMESTAMP
+            WHERE id = 1
+        """), {"new_gold": new_gold})
 
         connection.execute(sqlalchemy.text("""
             DELETE FROM carts_items WHERE cart_id = :cart_id
@@ -217,4 +201,4 @@ def checkout(cart_id: int, cart_checkout: CartCheckout):
             UPDATE carts SET status = 'checked_out' WHERE id = :cart_id
         """), {"cart_id": cart_id})
 
-    return {"message": "Checkout successful", "total_gold_paid": total_gold_paid}
+    return {"message": "Checkout successful", "total_gold_paid": total_gold_paid, "remaining_gold": new_gold}
