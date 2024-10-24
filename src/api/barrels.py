@@ -85,15 +85,15 @@ def get_wholesale_purchase_plan(wholesale_catalog: List[Barrel]):
                     purchase_plan.append({"sku": barrel.sku, "quantity": 1})
                     gold -= barrel.price
 
-            elif barrel.sku.upper() == "SMALL_GREEN_BARREL" and num_green_potions < 10:
+            elif barrel.sku.upper() == "MINI_GREEN_BARREL" and num_green_potions < 10:
                 purchase_plan.append({"sku": barrel.sku, "quantity": 1})
                 gold -= barrel.price
 
-            elif barrel.sku.upper() == "SMALL_RED_BARREL" and num_red_potions < 10:
+            elif barrel.sku.upper() == "MINI_RED_BARREL" and num_red_potions < 10:
                 purchase_plan.append({"sku": barrel.sku, "quantity": 1})
                 gold -= barrel.price
 
-            elif barrel.sku.upper() == "SMALL_BLUE_BARREL" and num_blue_potions < 10:
+            elif barrel.sku.upper() == "MINI_BLUE_BARREL" and num_blue_potions < 10:
                 purchase_plan.append({"sku": barrel.sku, "quantity": 1})
                 gold -= barrel.price
 
