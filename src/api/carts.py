@@ -150,7 +150,6 @@ def checkout(cart_id: int, cart_checkout: CartCheckout):
     Process the cart checkout, deduct potion inventory from potion_catalog, update gold, and finalize the cart.
     """
     with db.engine.begin() as connection:
-        # Fetch the cart items and necessary details in one query
         cart_items = connection.execute(sqlalchemy.text("""
             SELECT ci.quantity, c.sku, c.price, c.inventory
             FROM carts_items ci
@@ -163,13 +162,11 @@ def checkout(cart_id: int, cart_checkout: CartCheckout):
 
         total_gold_paid = sum(item.price * item.quantity for item in cart_items)
 
-        # Check for insufficient inventory in one go
         insufficient_inventory = [item for item in cart_items if item.inventory < item.quantity]
         if insufficient_inventory:
             insufficient_skus = [item.sku for item in insufficient_inventory]
             return {"error": f"Insufficient inventory for potions: {', '.join(insufficient_skus)}"}
 
-        # Fetch current gold once
         global_inventory = connection.execute(sqlalchemy.text("""
             SELECT gold FROM global_inventory WHERE id = 1
         """)).fetchone()
