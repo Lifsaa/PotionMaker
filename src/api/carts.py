@@ -150,6 +150,7 @@ def checkout(cart_id: int, cart_checkout: CartCheckout):
     Process the cart checkout, deduct potion inventory from potion_catalog, update gold, and finalize the cart.
     """
     with db.engine.begin() as connection:
+        # Fetch the cart items and necessary details in one query
         cart_items = connection.execute(sqlalchemy.text("""
             SELECT ci.quantity, c.sku, c.price, c.inventory
             FROM carts_items ci
@@ -160,31 +161,26 @@ def checkout(cart_id: int, cart_checkout: CartCheckout):
         if not cart_items:
             return {"error": "Cart is empty"}
 
-        print(f"Cart ID: {cart_id}")
-        for item in cart_items:
-            print(f"Potion SKU: {item.sku}, Quantity: {item.quantity}, Inventory: {item.inventory}, Price: {item.price}")
+        total_gold_paid = sum(item.price * item.quantity for item in cart_items)
 
-        total_gold_paid = 0
-        for item in cart_items:
-            quantity = item.quantity
-            if item.inventory < quantity:
-                print(f"Insufficient potion inventory for {item.sku}, Available: {item.inventory}, Needed: {quantity}")
-                return {"error": f"Insufficient potion inventory for {item.sku}"}
-            total_gold_paid += item.price * quantity
+        # Check for insufficient inventory in one go
+        insufficient_inventory = [item for item in cart_items if item.inventory < item.quantity]
+        if insufficient_inventory:
+            insufficient_skus = [item.sku for item in insufficient_inventory]
+            return {"error": f"Insufficient inventory for potions: {', '.join(insufficient_skus)}"}
 
+        # Fetch current gold once
         global_inventory = connection.execute(sqlalchemy.text("""
             SELECT gold FROM global_inventory WHERE id = 1
         """)).fetchone()
-
         current_gold = global_inventory.gold
 
-        for item in cart_items:
-            connection.execute(sqlalchemy.text("""
-                UPDATE potion_catalog
-                SET inventory = inventory - :quantity
-                WHERE sku = :sku
-            """), {"quantity": item.quantity, "sku": item.sku})
-            
+        connection.execute(sqlalchemy.text("""
+            UPDATE potion_catalog
+            SET inventory = inventory - data.quantity
+            FROM (VALUES (:quantity, :sku)) AS data(quantity, sku)
+            WHERE potion_catalog.sku = data.sku
+        """), [{"quantity": item.quantity, "sku": item.sku} for item in cart_items])
 
         new_gold = current_gold + total_gold_paid
         connection.execute(sqlalchemy.text("""
