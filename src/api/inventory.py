@@ -11,44 +11,55 @@ router = APIRouter(
 )
 
 @router.get("/audit")
-def get_inventory():
-    """
-    Audit the current inventory, including total number of potions, ml in barrels, and available gold.
-    """
+def audit_inventory():
+    """Audit the inventory, reflecting potion counts, ml amounts, and custom potion details."""
     with db.engine.begin() as connection:
-        inventory = connection.execute(sqlalchemy.text("""
-            SELECT num_red_potions, num_green_potions, num_blue_potions, num_dark_potions,
-                   num_red_ml, num_green_ml, num_blue_ml, num_dark_ml, gold
+        global_inventory_res = connection.execute(sqlalchemy.text("""
+            SELECT 
+                num_red_ml, num_green_ml, num_blue_ml, num_dark_ml,
+                gold, last_updated
             FROM global_inventory
         """)).fetchone()
+        
+        total_red_ml = global_inventory_res.num_red_ml
+        total_green_ml = global_inventory_res.num_green_ml
+        total_blue_ml = global_inventory_res.num_blue_ml
+        total_dark_ml = global_inventory_res.num_dark_ml
+        total_gold = global_inventory_res.gold
+        last_updated = global_inventory_res.last_updated
 
-        custom_potions = connection.execute(sqlalchemy.text("""
-            SELECT SUM(inventory) AS total_custom_potions,
-                   SUM(red_component * inventory) AS red_ml,
-                   SUM(green_component * inventory) AS green_ml,
-                   SUM(blue_component * inventory) AS blue_ml,
-                   SUM(dark_component * inventory) AS dark_ml
+        potion_catalog_res = connection.execute(sqlalchemy.text("""
+            SELECT 
+            name, red_component, green_component, blue_component, dark_component, inventory
             FROM potion_catalog
-        """)).fetchone()
-
-        total_potions = (
-            inventory.num_red_potions + inventory.num_green_potions +
-            inventory.num_blue_potions + inventory.num_dark_potions +
-            custom_potions.total_custom_potions
-        )
-
-        total_ml = (
-            inventory.num_red_ml + inventory.num_green_ml +
-            inventory.num_blue_ml + inventory.num_dark_ml +
-            custom_potions.red_ml + custom_potions.green_ml +
-            custom_potions.blue_ml + custom_potions.dark_ml
-        )
-
-        return {
-            "number_of_potions": total_potions,
-            "ml_in_barrels": total_ml,
-            "gold": inventory.gold
+        """)).fetchall()
+        
+        audit_data = {
+            "gold": total_gold,
+            "last_updated": last_updated,
+            "ml_inventory": {
+                "red_ml": total_red_ml,
+                "green_ml": total_green_ml,
+                "blue_ml": total_blue_ml,
+                "dark_ml": total_dark_ml
+            },
+            "potion_inventory": {
+                "custom_potions": []
+            }
         }
+
+        for row in potion_catalog_res:
+            custom_potion = {
+                "name": row.name,
+                "red_component": row.red_component,
+                "green_component": row.green_component,
+                "blue_component": row.blue_component,
+                "dark_component": row.dark_component,
+                "inventory": row.inventory
+            }
+            audit_data["potion_inventory"]["custom_potions"].append(custom_potion)
+    print(audit_data)
+    return audit_data
 
 
 # Gets called once a day
