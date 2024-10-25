@@ -33,7 +33,9 @@ def post_deliver_barrels(barrels_delivered: List[Barrel], order_id: int):
         total_red_ml = res.num_red_ml
         total_blue_ml = res.num_blue_ml
         total_gold = res.gold
-        
+        print(f"Current gold: {total_gold}")  
+        print(barrels_delivered)
+
         for barrel in barrels_delivered:
             if barrel.potion_type == [0, 1, 0, 0]:  
                 total_green_ml += barrel.ml_per_barrel
@@ -42,7 +44,8 @@ def post_deliver_barrels(barrels_delivered: List[Barrel], order_id: int):
             if barrel.potion_type == [0, 0, 1, 0]:  
                 total_blue_ml += barrel.ml_per_barrel
             total_gold -= barrel.price
-
+            
+        print(total_gold)
         connection.execute(sqlalchemy.text(f"""
             UPDATE global_inventory 
             SET num_green_ml = {total_green_ml}, 
@@ -67,6 +70,7 @@ def get_wholesale_purchase_plan(wholesale_catalog: List[Barrel]):
         num_blue_potions = res.num_blue_potions
         gold = res.gold            
         purchase_plan = []
+        print(gold)
        
         for barrel in wholesale_catalog:
             if gold < barrel.price:  
@@ -82,6 +86,11 @@ def get_wholesale_purchase_plan(wholesale_catalog: List[Barrel]):
             if barrel.sku.upper() == "MINI_GREEN_BARREL" and num_green_potions < 10:
                 purchase_plan.append({"sku": barrel.sku, "quantity": 1})
                 gold -= barrel.price
+            else: 
+                purchase_plan.append({"sku": barrel.sku, "quantity": 1})
+                gold -= barrel.price
+            print(gold)
+
 
         return purchase_plan
     return []
