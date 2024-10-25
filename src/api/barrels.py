@@ -37,9 +37,9 @@ def post_deliver_barrels(barrels_delivered: List[Barrel], order_id: int):
         for barrel in barrels_delivered:
             if barrel.potion_type == [0, 1, 0, 0]:  
                 total_green_ml += barrel.ml_per_barrel
-            elif barrel.potion_type == [1, 0, 0, 0]:  
+            if barrel.potion_type == [1, 0, 0, 0]:  
                 total_red_ml += barrel.ml_per_barrel
-            elif barrel.potion_type == [0, 0, 1, 0]:  
+            if barrel.potion_type == [0, 0, 1, 0]:  
                 total_blue_ml += barrel.ml_per_barrel
             total_gold -= barrel.price
 
@@ -72,28 +72,14 @@ def get_wholesale_purchase_plan(wholesale_catalog: List[Barrel]):
             if gold < barrel.price:  
                 continue
 
-            if barrel.sku.upper().startswith("MEDIUM"):
-                if barrel.potion_type == [1, 0, 0, 0] and num_red_potions < 30:  
-                    purchase_plan.append({"sku": barrel.sku, "quantity": 1})
-                    gold -= barrel.price
-                
-                elif barrel.potion_type == [0, 1, 0, 0] and num_green_potions < 30:  
-                    purchase_plan.append({"sku": barrel.sku, "quantity": 1})
-                    gold -= barrel.price
-                
-                elif barrel.potion_type == [0, 0, 1, 0] and num_blue_potions < 20:  
-                    purchase_plan.append({"sku": barrel.sku, "quantity": 1})
-                    gold -= barrel.price
-
-            elif barrel.sku.upper() == "MINI_GREEN_BARREL" and num_green_potions < 10:
+            if barrel.sku.upper() == "MINI_RED_BARREL" and num_red_potions < 10:
                 purchase_plan.append({"sku": barrel.sku, "quantity": 1})
                 gold -= barrel.price
 
-            elif barrel.sku.upper() == "MINI_RED_BARREL" and num_red_potions < 10:
+            if barrel.sku.upper() == "MINI_BLUE_BARREL" and num_blue_potions < 10:
                 purchase_plan.append({"sku": barrel.sku, "quantity": 1})
                 gold -= barrel.price
-
-            elif barrel.sku.upper() == "MINI_BLUE_BARREL" and num_blue_potions < 10:
+            if barrel.sku.upper() == "MINI_GREEN_BARREL" and num_green_potions < 10:
                 purchase_plan.append({"sku": barrel.sku, "quantity": 1})
                 gold -= barrel.price
 
