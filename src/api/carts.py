@@ -97,12 +97,21 @@ def create_cart():
     """
     Create a new cart and set the status to 'active'.
     """
-    with db.engine.begin() as connection:
-        result = connection.execute(
-            sqlalchemy.text("INSERT INTO carts (status) VALUES ('active') RETURNING id")
-        )
-        cart_id = result.fetchone().id
-    return {"cart_id": cart_id}
+    try:
+        with db.engine.begin() as connection:
+            result = connection.execute(
+                sqlalchemy.text("INSERT INTO carts (status) VALUES ('active') RETURNING id")
+            )
+            fetched = result.fetchone()
+            if fetched is None:
+                raise ValueError("Failed to create cart: No ID returned.")
+            cart_id = fetched.id
+            print(f"Created cart with ID: {cart_id}")
+        return {"cart_id": cart_id}
+    except Exception as e:
+        print(f"Error creating cart: {e}")
+        return {"error": "Failed to create cart."}
+
 
 
 
@@ -111,33 +120,47 @@ def set_item_quantity(cart_id: int, item_sku: str, cart_item: CartItem):
     """
     Updates the quantity of a specific item in the cart.
     """
-    with db.engine.begin() as connection:
-        catalog_item = connection.execute(sqlalchemy.text("""
-            SELECT id, inventory FROM potion_catalog WHERE sku = :item_sku
-        """), {"item_sku": item_sku}).fetchone()
+    try:
+        with db.engine.begin() as connection:
+            cart = connection.execute(sqlalchemy.text("""
+                SELECT id FROM carts WHERE id = :cart_id FOR UPDATE
+            """), {"cart_id": cart_id}).fetchone()
 
-        if catalog_item is None:
-            return {"error": "Item not found in catalog."}
+            if cart is None:
+                print(f"Cart with ID {cart_id} not found.")
+                return {"error": "Cart not found."}
 
-        catalog_id = catalog_item.id
+            catalog_item = connection.execute(sqlalchemy.text("""
+                SELECT id, inventory FROM potion_catalog WHERE sku = :item_sku FOR UPDATE
+            """), {"item_sku": item_sku}).fetchone()
 
-        existing_item = connection.execute(sqlalchemy.text("""
-            SELECT quantity FROM carts_items
-            WHERE cart_id = :cart_id AND catalog_id = :catalog_id
-        """), {"cart_id": cart_id, "catalog_id": catalog_id}).fetchone()
+            if catalog_item is None:
+                print(f"Item with SKU {item_sku} not found in catalog.")
+                return {"error": "Item not found in catalog."}
 
-        if existing_item:
-            connection.execute(sqlalchemy.text("""
-                UPDATE carts_items
-                SET quantity = :quantity
-                WHERE cart_id = :cart_id AND catalog_id = :catalog_id
-            """), {"quantity": cart_item.quantity, "cart_id": cart_id, "catalog_id": catalog_id})
-        else:
+            catalog_id = catalog_item.id
+            print(f"Updating cart_id {cart_id} with item_sku {item_sku} (catalog_id {catalog_id}) to quantity {cart_item.quantity}")
+
             connection.execute(sqlalchemy.text("""
                 INSERT INTO carts_items (cart_id, catalog_id, quantity, sku)
                 VALUES (:cart_id, :catalog_id, :quantity, :item_sku)
-            """), {"cart_id": cart_id, "catalog_id": catalog_id, "quantity": cart_item.quantity, "item_sku": item_sku})
-    return {"success": True}
+                ON CONFLICT (cart_id, catalog_id) DO UPDATE
+                SET quantity = EXCLUDED.quantity
+            """), {
+                "cart_id": cart_id,
+                "catalog_id": catalog_id,
+                "quantity": cart_item.quantity,
+                "item_sku": item_sku
+            })
+
+            print(f"Set quantity for SKU {item_sku} in cart {cart_id} to {cart_item.quantity}")
+
+        return {"success": True}
+    except Exception as e:
+        print(f"Error setting item quantity: {e}")
+        return {"error": "Failed to set item quantity."}
+
+
 
 
 
@@ -149,49 +172,70 @@ def checkout(cart_id: int, cart_checkout: CartCheckout):
     """
     Process the cart checkout, deduct potion inventory from potion_catalog, update gold, and finalize the cart.
     """
-    with db.engine.begin() as connection:
-        cart_items = connection.execute(sqlalchemy.text("""
-            SELECT ci.quantity, c.sku, c.price, c.inventory
-            FROM carts_items ci
-            JOIN potion_catalog c ON ci.catalog_id = c.id
-            WHERE ci.cart_id = :cart_id
-        """), {"cart_id": cart_id}).fetchall()
+    try:
+        with db.engine.begin() as connection:
+            cart_items = connection.execute(sqlalchemy.text("""
+                SELECT ci.quantity, c.id as catalog_id, c.sku, c.price, c.inventory
+                FROM carts_items ci
+                JOIN potion_catalog c ON ci.catalog_id = c.id
+                WHERE ci.cart_id = :cart_id
+                FOR UPDATE
+            """), {"cart_id": cart_id}).fetchall()
 
-        if not cart_items:
-            return {"error": "Cart is empty"}
+            if not cart_items:
+                print(f"Cart {cart_id} is empty.")
+                return {"error": "Cart is empty"}
 
-        total_gold_paid = sum(item.price * item.quantity for item in cart_items)
+            print(f"Cart {cart_id} items: {cart_items}")
 
-        insufficient_inventory = [item for item in cart_items if item.inventory < item.quantity]
-        if insufficient_inventory:
-            insufficient_skus = [item.sku for item in insufficient_inventory]
-            return {"error": f"Insufficient inventory for potions: {', '.join(insufficient_skus)}"}
+            total_gold_paid = sum(item.price * item.quantity for item in cart_items)
+            print(f"Total gold to be paid: {total_gold_paid}")
 
-        global_inventory = connection.execute(sqlalchemy.text("""
-            SELECT gold FROM global_inventory WHERE id = 1
-        """)).fetchone()
-        current_gold = global_inventory.gold
+            insufficient_inventory = [item for item in cart_items if item.inventory < item.quantity]
+            if insufficient_inventory:
+                insufficient_skus = [item.sku for item in insufficient_inventory]
+                print(f"Insufficient inventory for SKUs: {insufficient_skus}")
+                return {"error": f"Insufficient inventory for potions: {', '.join(insufficient_skus)}"}
 
-        connection.execute(sqlalchemy.text("""
-            UPDATE potion_catalog
-            SET inventory = inventory - data.quantity
-            FROM (VALUES (:quantity, :sku)) AS data(quantity, sku)
-            WHERE potion_catalog.sku = data.sku
-        """), [{"quantity": item.quantity, "sku": item.sku} for item in cart_items])
+            for item in cart_items:
+                print(f"Deducting {item.quantity} from inventory of SKU {item.sku} (ID {item.catalog_id})")
+                connection.execute(sqlalchemy.text("""
+                    UPDATE potion_catalog
+                    SET inventory = inventory - :quantity
+                    WHERE id = :catalog_id
+                """), {"quantity": item.quantity, "catalog_id": item.catalog_id})
 
-        new_gold = current_gold + total_gold_paid
-        connection.execute(sqlalchemy.text("""
-            UPDATE global_inventory
-            SET gold = :new_gold, last_updated = CURRENT_TIMESTAMP
-            WHERE id = 1
-        """), {"new_gold": new_gold})
+            result = connection.execute(sqlalchemy.text("""
+                UPDATE global_inventory
+                SET gold = gold + :total_gold_paid, last_updated = CURRENT_TIMESTAMP
+                WHERE id = 1
+                RETURNING gold
+            """), {"total_gold_paid": total_gold_paid}).fetchone()
 
-        connection.execute(sqlalchemy.text("""
-            DELETE FROM carts_items WHERE cart_id = :cart_id
-        """), {"cart_id": cart_id})
+            if result is None:
+                print("Failed to update gold in global_inventory.")
+                raise ValueError("Global inventory not found.")
 
-        connection.execute(sqlalchemy.text("""
-            UPDATE carts SET status = 'checked_out' WHERE id = :cart_id
-        """), {"cart_id": cart_id})
+            new_gold = result.gold
+            print(f"Updated gold in global_inventory: {new_gold}")
 
-    return {"message": "Checkout successful", "total_gold_paid": total_gold_paid, "remaining_gold": new_gold}
+            connection.execute(sqlalchemy.text("""
+                UPDATE carts 
+                SET status = 'checked_out', updated_at = CURRENT_TIMESTAMP 
+                WHERE id = :cart_id
+            """), {"cart_id": cart_id})
+            print(f"Cart {cart_id} status updated to 'checked_out'.")
+
+            connection.execute(sqlalchemy.text("""
+                DELETE FROM carts_items WHERE cart_id = :cart_id
+            """), {"cart_id": cart_id})
+            print(f"Cart {cart_id} items cleared.")
+
+        return {
+            "message": "Checkout successful",
+            "total_gold_paid": total_gold_paid,
+            "remaining_gold": new_gold
+        }
+    except Exception as e:
+        print(f"Error during checkout: {e}")
+        return {"error": "Checkout failed due to an internal error."}

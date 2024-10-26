@@ -12,28 +12,36 @@ router = APIRouter(
 
 @router.get("/audit")
 def audit_inventory():
-    """Audit the inventory, reflecting potion counts, ml amounts, and custom potion details."""
+    print("Starting inventory audit.")
     with db.engine.begin() as connection:
-        global_inventory_res = connection.execute(sqlalchemy.text("""
+        res = connection.execute(sqlalchemy.text("""
             SELECT 
                 num_red_ml, num_green_ml, num_blue_ml, num_dark_ml,
                 gold, last_updated
             FROM global_inventory
-        """)).fetchone()
+            WHERE id = :inventory_id
+        """), {"inventory_id":1}).fetchone()
         
-        total_red_ml = global_inventory_res.num_red_ml
-        total_green_ml = global_inventory_res.num_green_ml
-        total_blue_ml = global_inventory_res.num_blue_ml
-        total_dark_ml = global_inventory_res.num_dark_ml
-        total_gold = global_inventory_res.gold
-        last_updated = global_inventory_res.last_updated
-
+        if res is None:
+            print("Global inventory not found during audit.")
+            return {"error": "Global inventory not found."}
+        
+        total_red_ml = res.num_red_ml
+        total_green_ml = res.num_green_ml
+        total_blue_ml = res.num_blue_ml
+        total_dark_ml = res.num_dark_ml
+        total_gold = res.gold
+        last_updated = res.last_updated
+        print(f"Fetched Global Inventory - Red ML: {total_red_ml}, Green ML: {total_green_ml}, Blue ML: {total_blue_ml}, Dark ML: {total_dark_ml}, Gold: {total_gold}, Last Updated: {last_updated}")
+    
         potion_catalog_res = connection.execute(sqlalchemy.text("""
             SELECT 
-            name, red_component, green_component, blue_component, dark_component, inventory
+                name, red_component, green_component, blue_component, dark_component, inventory
             FROM potion_catalog
         """)).fetchall()
         
+        print(f"Fetched Potion Catalog: {potion_catalog_res}")
+    
         audit_data = {
             "gold": total_gold,
             "last_updated": last_updated,
@@ -47,7 +55,7 @@ def audit_inventory():
                 "custom_potions": []
             }
         }
-
+    
         for row in potion_catalog_res:
             custom_potion = {
                 "name": row.name,
@@ -58,8 +66,11 @@ def audit_inventory():
                 "inventory": row.inventory
             }
             audit_data["potion_inventory"]["custom_potions"].append(custom_potion)
-    print(audit_data)
+            print(f"Custom Potion: {custom_potion}")
+    
+    print(f"Audit Data: {audit_data}")
     return audit_data
+
 
 
 # Gets called once a day
