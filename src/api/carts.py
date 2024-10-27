@@ -205,19 +205,24 @@ def checkout(cart_id: int, cart_checkout: CartCheckout):
                     WHERE id = :catalog_id
                 """), {"quantity": item.quantity, "catalog_id": item.catalog_id})
 
-            result = connection.execute(sqlalchemy.text("""
-                UPDATE global_inventory
-                SET gold = gold + :total_gold_paid, last_updated = CURRENT_TIMESTAMP
-                WHERE id = 1
-                RETURNING gold
-            """), {"total_gold_paid": total_gold_paid}).fetchone()
+            global_inventory = connection.execute(sqlalchemy.text("""
+                SELECT gold FROM global_inventory
+                WHERE id = :inventory_id
+                FOR UPDATE
+            """), {"inventory_id": 1}).fetchone()
 
-            if result is None:
+            if global_inventory is None:
                 print("Failed to update gold in global_inventory.")
                 raise ValueError("Global inventory not found.")
 
-            new_gold = result.gold
+            new_gold = global_inventory.gold + total_gold_paid
             print(f"Updated gold in global_inventory: {new_gold}")
+
+            connection.execute(sqlalchemy.text("""
+                UPDATE global_inventory
+                SET gold = :new_gold, last_updated = CURRENT_TIMESTAMP
+                WHERE id = :inventory_id
+            """), {"new_gold": new_gold, "inventory_id": 1})
 
             connection.execute(sqlalchemy.text("""
                 UPDATE carts 
