@@ -22,62 +22,57 @@ class Barrel(BaseModel):
 def post_deliver_barrels(barrels_delivered: List[Barrel], order_id: int):
     print(f"Delivering barrels for Order ID: {order_id}")
     print(f"Barrels to deliver: {barrels_delivered}")
-    
+
+    total_gold_deducted = 0
+    total_green_ml_added = 0
+    total_red_ml_added = 0
+    total_blue_ml_added = 0
+
+    for barrel in barrels_delivered:
+        cost = barrel.price * barrel.quantity
+        total_gold_deducted += cost
+        ml_added = barrel.ml_per_barrel * barrel.quantity
+
+        if barrel.potion_type == [0, 1, 0, 0]:
+            total_green_ml_added += ml_added
+        elif barrel.potion_type == [1, 0, 0, 0]:
+            total_red_ml_added += ml_added
+        elif barrel.potion_type == [0, 0, 1, 0]:
+            total_blue_ml_added += ml_added
+
     with db.engine.begin() as connection:
-        res = connection.execute(sqlalchemy.text("""
-            SELECT num_green_ml, num_red_ml, num_blue_ml, gold 
-            FROM global_inventory
+        result = connection.execute(sqlalchemy.text("""
+            UPDATE global_inventory
+            SET
+                gold = gold - :gold_deducted,
+                num_green_ml = num_green_ml + :green_ml_added,
+                num_red_ml = num_red_ml + :red_ml_added,
+                num_blue_ml = num_blue_ml + :blue_ml_added
             WHERE id = :inventory_id
-            FOR UPDATE
-        """), {"inventory_id": 1}).fetchone()
-        
-        if res is None:
+            RETURNING gold
+        """), {
+            "gold_deducted": total_gold_deducted,
+            "green_ml_added": total_green_ml_added,
+            "red_ml_added": total_red_ml_added,
+            "blue_ml_added": total_blue_ml_added,
+            "inventory_id": 1
+        })
+
+        updated_row = result.fetchone()
+        if updated_row is None:
             print("Global inventory not found.")
             return {"error": "Global inventory not found."}
-        
-        total_green_ml = res.num_green_ml
-        total_red_ml = res.num_red_ml
-        total_blue_ml = res.num_blue_ml
-        total_gold = res.gold
-        print(f"Initial Inventory - Green ML: {total_green_ml}, Red ML: {total_red_ml}, Blue ML: {total_blue_ml}, Gold: {total_gold}")
-    
-        for barrel in barrels_delivered:
-            print(f"Processing Barrel SKU: {barrel.sku}, Quantity: {barrel.quantity}")
-            if barrel.potion_type == [0, 1, 0, 0]:  
-                total_green_ml += barrel.ml_per_barrel * barrel.quantity
-                print(f"Added {barrel.ml_per_barrel * barrel.quantity} ML to Green Potions.")
-            if barrel.potion_type == [1, 0, 0, 0]:  
-                total_red_ml += barrel.ml_per_barrel * barrel.quantity
-                print(f"Added {barrel.ml_per_barrel * barrel.quantity} ML to Red Potions.")
-            if barrel.potion_type == [0, 0, 1, 0]:  
-                total_blue_ml += barrel.ml_per_barrel * barrel.quantity
-                print(f"Added {barrel.ml_per_barrel * barrel.quantity} ML to Blue Potions.")
-            total_gold -= barrel.price * barrel.quantity
-            print(f"Deducted {barrel.price * barrel.quantity} Gold. Remaining Gold: {total_gold}")
-        
-        print(f"Updated Totals - Green ML: {total_green_ml}, Red ML: {total_red_ml}, Blue ML: {total_blue_ml}, Gold: {total_gold}")
-        
-        if total_gold < 0:
+
+        updated_gold = updated_row.gold
+        print(f"Updated Gold: {updated_gold}")
+
+        if updated_gold < 0:
             print("Error: Not enough gold to complete the delivery.")
-            return {"error": "Not enough gold"}
-        
-        connection.execute(sqlalchemy.text("""
-            UPDATE global_inventory 
-            SET num_green_ml = :green_ml, 
-                num_red_ml = :red_ml,  
-                num_blue_ml = :blue_ml, 
-                gold = :gold
-            WHERE id = :inventory_id
-        """), {
-            "green_ml": total_green_ml,
-            "red_ml": total_red_ml,
-            "blue_ml": total_blue_ml,
-            "gold": total_gold,
-            "inventory_id":1
-        })
-        print("Global inventory updated successfully.")
-    
+            raise ValueError("Not enough gold")
+
+    print("Global inventory updated successfully.")
     return {"message": "UPDATED inventory"}
+
 
 # Gets called once a day
 @router.post("/plan")

@@ -169,9 +169,6 @@ class CartCheckout(BaseModel):
 
 @router.post("/{cart_id}/checkout")
 def checkout(cart_id: int, cart_checkout: CartCheckout):
-    """
-    Process the cart checkout, deduct potion inventory from potion_catalog, update gold, and finalize the cart.
-    """
     try:
         with db.engine.begin() as connection:
             cart_items = connection.execute(sqlalchemy.text("""
@@ -186,10 +183,7 @@ def checkout(cart_id: int, cart_checkout: CartCheckout):
                 print(f"Cart {cart_id} is empty.")
                 return {"error": "Cart is empty"}
 
-            print(f"Cart {cart_id} items: {cart_items}")
-
             total_gold_paid = sum(item.price * item.quantity for item in cart_items)
-            print(f"Total gold to be paid: {total_gold_paid}")
 
             insufficient_inventory = [item for item in cart_items if item.inventory < item.quantity]
             if insufficient_inventory:
@@ -198,43 +192,36 @@ def checkout(cart_id: int, cart_checkout: CartCheckout):
                 return {"error": f"Insufficient inventory for potions: {', '.join(insufficient_skus)}"}
 
             for item in cart_items:
-                print(f"Deducting {item.quantity} from inventory of SKU {item.sku} (ID {item.catalog_id})")
                 connection.execute(sqlalchemy.text("""
                     UPDATE potion_catalog
                     SET inventory = inventory - :quantity
                     WHERE id = :catalog_id
                 """), {"quantity": item.quantity, "catalog_id": item.catalog_id})
 
-            global_inventory = connection.execute(sqlalchemy.text("""
-                SELECT gold FROM global_inventory
-                WHERE id = :inventory_id
-                FOR UPDATE
-            """), {"inventory_id": 1}).fetchone()
-
-            if global_inventory is None:
-                print("Failed to update gold in global_inventory.")
-                raise ValueError("Global inventory not found.")
-
-            new_gold = global_inventory.gold + total_gold_paid
-            print(f"Updated gold in global_inventory: {new_gold}")
-
-            connection.execute(sqlalchemy.text("""
+            result = connection.execute(sqlalchemy.text("""
                 UPDATE global_inventory
-                SET gold = :new_gold, last_updated = CURRENT_TIMESTAMP
+                SET gold = gold + :total_gold_paid, last_updated = CURRENT_TIMESTAMP
                 WHERE id = :inventory_id
-            """), {"new_gold": new_gold, "inventory_id": 1})
+                RETURNING gold
+            """), {"total_gold_paid": total_gold_paid, "inventory_id": 1})
+
+            new_gold_row = result.fetchone()
+            if new_gold_row is None:
+                print("Failed to update gold in global_inventory.")
+                raise ValueError("Failed to update gold.")
+
+            new_gold = new_gold_row.gold
+            print(f"Updated gold in global_inventory: {new_gold}")
 
             connection.execute(sqlalchemy.text("""
                 UPDATE carts 
                 SET status = 'checked_out', updated_at = CURRENT_TIMESTAMP 
                 WHERE id = :cart_id
             """), {"cart_id": cart_id})
-            print(f"Cart {cart_id} status updated to 'checked_out'.")
 
             connection.execute(sqlalchemy.text("""
                 DELETE FROM carts_items WHERE cart_id = :cart_id
             """), {"cart_id": cart_id})
-            print(f"Cart {cart_id} items cleared.")
 
         return {
             "message": "Checkout successful",
@@ -244,3 +231,4 @@ def checkout(cart_id: int, cart_checkout: CartCheckout):
     except Exception as e:
         print(f"Error during checkout: {e}")
         return {"error": "Checkout failed due to an internal error."}
+
