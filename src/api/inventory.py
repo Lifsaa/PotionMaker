@@ -14,37 +14,54 @@ router = APIRouter(
 def audit_inventory():
     print("Starting inventory audit.")
     with db.engine.begin() as connection:
-        res = connection.execute(sqlalchemy.text("""
+        gold_result = connection.execute(sqlalchemy.text("""
+            SELECT COALESCE(SUM(change), 0) as gold_total FROM gold_ledger_entries
+        """))
+        total_gold = gold_result.fetchone().gold_total or 0
+
+        ml_result = connection.execute(sqlalchemy.text("""
             SELECT 
-                num_red_ml, num_green_ml, num_blue_ml, num_dark_ml,
-                gold, last_updated
-            FROM global_inventory
-            WHERE id = :inventory_id
-        """), {"inventory_id":1}).fetchone()
-        
-        if res is None:
-            print("Global inventory not found during audit.")
-            return {"error": "Global inventory not found."}
-        
-        total_red_ml = res.num_red_ml
-        total_green_ml = res.num_green_ml
-        total_blue_ml = res.num_blue_ml
-        total_dark_ml = res.num_dark_ml
-        total_gold = res.gold
-        last_updated = res.last_updated
-        print(f"Fetched Global Inventory - Red ML: {total_red_ml}, Green ML: {total_green_ml}, Blue ML: {total_blue_ml}, Dark ML: {total_dark_ml}, Gold: {total_gold}, Last Updated: {last_updated}")
-    
+                COALESCE(SUM(red_ml_change), 0) as total_red_ml,
+                COALESCE(SUM(green_ml_change), 0) as total_green_ml,
+                COALESCE(SUM(blue_ml_change), 0) as total_blue_ml,
+                COALESCE(SUM(dark_ml_change), 0) as total_dark_ml
+            FROM ml_ledger_entries
+        """)).fetchone()
+
+        total_red_ml = ml_result.total_red_ml
+        total_green_ml = ml_result.total_green_ml
+        total_blue_ml = ml_result.total_blue_ml
+        total_dark_ml = ml_result.total_dark_ml
+
         potion_catalog_res = connection.execute(sqlalchemy.text("""
             SELECT 
-                name, red_component, green_component, blue_component, dark_component, inventory
+                id, name, red_component, green_component, blue_component, dark_component
             FROM potion_catalog
         """)).fetchall()
-        
-        print(f"Fetched Potion Catalog: {potion_catalog_res}")
-    
+
+        potion_inventory = []
+
+        for row in potion_catalog_res:
+            ledger_result = connection.execute(sqlalchemy.text("""
+                SELECT COALESCE(SUM(change), 0) as total_inventory
+                FROM potion_inventory_ledger_entries
+                WHERE potion_catalog_id = :catalog_id
+            """), {"catalog_id": row.id})
+            total_inventory = ledger_result.fetchone().total_inventory or 0
+
+            custom_potion = {
+                "name": row.name,
+                "red_component": row.red_component,
+                "green_component": row.green_component,
+                "blue_component": row.blue_component,
+                "dark_component": row.dark_component,
+                "inventory": total_inventory
+            }
+            potion_inventory.append(custom_potion)
+            print(f"Custom Potion: {custom_potion}")
+
         audit_data = {
             "gold": total_gold,
-            "last_updated": last_updated,
             "ml_inventory": {
                 "red_ml": total_red_ml,
                 "green_ml": total_green_ml,
@@ -52,24 +69,13 @@ def audit_inventory():
                 "dark_ml": total_dark_ml
             },
             "potion_inventory": {
-                "custom_potions": []
+                "custom_potions": potion_inventory
             }
         }
-    
-        for row in potion_catalog_res:
-            custom_potion = {
-                "name": row.name,
-                "red_component": row.red_component,
-                "green_component": row.green_component,
-                "blue_component": row.blue_component,
-                "dark_component": row.dark_component,
-                "inventory": row.inventory
-            }
-            audit_data["potion_inventory"]["custom_potions"].append(custom_potion)
-            print(f"Custom Potion: {custom_potion}")
-    
+
     print(f"Audit Data: {audit_data}")
     return audit_data
+
 
 
 

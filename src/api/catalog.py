@@ -12,28 +12,33 @@ def get_catalog():
     catalog = []
     with db.engine.begin() as connection:
         result = connection.execute(sqlalchemy.text("""
-            SELECT sku, name, price, inventory, red_component, green_component, blue_component, dark_component
+            SELECT id, sku, name, price, red_component, green_component, blue_component, dark_component
             FROM potion_catalog
         """))
         rows = result.fetchall()
         print(f"Fetched {len(rows)} potions from the database.")
         
-        skipped = 0
         for row in rows:
-            if row.inventory < 1:
-                skipped += 1
+            ledger_result = connection.execute(sqlalchemy.text("""
+                SELECT COALESCE(SUM(change), 0) as total_inventory
+                FROM potion_inventory_ledger_entries
+                WHERE potion_catalog_id = :catalog_id
+            """), {"catalog_id": row.id})
+            total_inventory = ledger_result.fetchone().total_inventory or 0
+
+            if total_inventory < 1:
                 print(f"Skipping SKU: {row.sku} due to insufficient inventory.")
                 continue
+
             potion_type = [row.red_component, row.green_component, row.blue_component, row.dark_component]
             catalog.append({
                 "sku": row.sku,
                 "name": row.name,
-                "quantity": row.inventory,
+                "quantity": total_inventory,
                 "price": row.price,
                 "potion_type": potion_type 
             })
-        print(f"Added {len(catalog)} potions to the catalog. Skipped {skipped} potions with zero inventory.")
+        print(f"Added {len(catalog)} potions to the catalog.")
     
     print("Completed fetching potion catalog.")
-    print(f"Catalog to return: {catalog}")
     return catalog if catalog else []

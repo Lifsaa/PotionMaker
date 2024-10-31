@@ -81,10 +81,39 @@ def post_visits(visit_id: int, customers: List[Customer]):
     Log customer visits and save them to the customer_info table if they don't already exist.
     """
     print(f"Visit ID: {visit_id}")
-    """
-    Which customers visited the shop today?
-    """
-    print(customers)
+    print(f"Customers visiting: {customers}")
+
+    with db.engine.begin() as connection:
+        for customer in customers:
+            existing_customer = connection.execute(sqlalchemy.text("""
+                SELECT id FROM customer_info
+                WHERE customer_name = :customer_name
+            """), {"customer_name": customer.customer_name}).fetchone()
+
+            if existing_customer:
+                connection.execute(sqlalchemy.text("""
+                    UPDATE customer_info
+                    SET character_class = :character_class, level = :level
+                    WHERE id = :customer_id
+                """), {
+                    "character_class": customer.character_class,
+                    "level": customer.level,
+                    "customer_id": existing_customer.id
+                })
+                print(f"Updated customer {customer.customer_name} with new information.")
+            else:
+                result = connection.execute(sqlalchemy.text("""
+                    INSERT INTO customer_info (customer_name, customer_class, level)
+                    VALUES (:customer_name, :customer_class, :level)
+                    RETURNING id
+                """), {
+                    "customer_name": customer.customer_name,
+                    "customer_class": customer.character_class,
+                    "level": customer.level
+                })
+                new_customer_id = result.fetchone().id
+                print(f"Added new customer {customer.customer_name} with ID {new_customer_id}.")
+
     return {"message": "Visit logged successfully"}
 
 
@@ -167,12 +196,15 @@ def set_item_quantity(cart_id: int, item_sku: str, cart_item: CartItem):
 class CartCheckout(BaseModel):
     payment: str
 
+class CartCheckout(BaseModel):
+    payment: str
+
 @router.post("/{cart_id}/checkout")
 def checkout(cart_id: int, cart_checkout: CartCheckout):
     try:
         with db.engine.begin() as connection:
             cart_items = connection.execute(sqlalchemy.text("""
-                SELECT ci.quantity, c.id as catalog_id, c.sku, c.price, c.inventory
+                SELECT ci.quantity, c.id as catalog_id, c.sku, c.price
                 FROM carts_items ci
                 JOIN potion_catalog c ON ci.catalog_id = c.id
                 WHERE ci.cart_id = :cart_id
@@ -185,33 +217,46 @@ def checkout(cart_id: int, cart_checkout: CartCheckout):
 
             total_gold_paid = sum(item.price * item.quantity for item in cart_items)
 
-            insufficient_inventory = [item for item in cart_items if item.inventory < item.quantity]
+            insufficient_inventory = []
+            for item in cart_items:
+                ledger_result = connection.execute(sqlalchemy.text("""
+                    SELECT COALESCE(SUM(change), 0) as total_inventory
+                    FROM potion_inventory_ledger_entries
+                    WHERE potion_catalog_id = :catalog_id
+
+                                                                                   """), {"catalog_id": item.catalog_id})
+                current_inventory = ledger_result.fetchone().total_inventory or 0
+                if current_inventory < item.quantity:
+                    insufficient_inventory.append(item.sku)
+
             if insufficient_inventory:
-                insufficient_skus = [item.sku for item in insufficient_inventory]
-                print(f"Insufficient inventory for SKUs: {insufficient_skus}")
-                return {"error": f"Insufficient inventory for potions: {', '.join(insufficient_skus)}"}
+                print(f"Insufficient inventory for SKUs: {insufficient_inventory}")
+                return {"error": f"Insufficient inventory for potions: {', '.join(insufficient_inventory)}"}
+
+            transaction_result = connection.execute(sqlalchemy.text("""
+                INSERT INTO transactions (description) VALUES (:description) RETURNING id
+            """), {"description": f"Cart checkout {cart_id}"})
+            transaction_id = transaction_result.fetchone().id
 
             for item in cart_items:
                 connection.execute(sqlalchemy.text("""
-                    UPDATE potion_catalog
-                    SET inventory = inventory - :quantity
-                    WHERE id = :catalog_id
-                """), {"quantity": item.quantity, "catalog_id": item.catalog_id})
+                    INSERT INTO potion_inventory_ledger_entries (potion_catalog_id, transaction_id, change, description)
+                    VALUES (:catalog_id, :transaction_id, :change, :description)
+                """), {
+                    "catalog_id": item.catalog_id,
+                    "transaction_id": transaction_id,
+                    "change": -item.quantity,
+                    "description": f"Sold {item.quantity} units of SKU {item.sku} from cart {cart_id}"
+                })
 
-            result = connection.execute(sqlalchemy.text("""
-                UPDATE global_inventory
-                SET gold = gold + :total_gold_paid, last_updated = CURRENT_TIMESTAMP
-                WHERE id = :inventory_id
-                RETURNING gold
-            """), {"total_gold_paid": total_gold_paid, "inventory_id": 1})
-
-            new_gold_row = result.fetchone()
-            if new_gold_row is None:
-                print("Failed to update gold in global_inventory.")
-                raise ValueError("Failed to update gold.")
-
-            new_gold = new_gold_row.gold
-            print(f"Updated gold in global_inventory: {new_gold}")
+            connection.execute(sqlalchemy.text("""
+                INSERT INTO gold_ledger_entries (transaction_id, change, description)
+                VALUES (:transaction_id, :change, :description)
+            """), {
+                "transaction_id": transaction_id,
+                "change": total_gold_paid,
+                "description": f"Revenue from cart checkout {cart_id}"
+            })
 
             connection.execute(sqlalchemy.text("""
                 UPDATE carts 
@@ -223,6 +268,11 @@ def checkout(cart_id: int, cart_checkout: CartCheckout):
                 DELETE FROM carts_items WHERE cart_id = :cart_id
             """), {"cart_id": cart_id})
 
+            gold_result = connection.execute(sqlalchemy.text("""
+                SELECT COALESCE(SUM(change), 0) as gold_total FROM gold_ledger_entries
+            """))
+            new_gold = gold_result.fetchone().gold_total or 0
+
         return {
             "message": "Checkout successful",
             "total_gold_paid": total_gold_paid,
@@ -231,4 +281,5 @@ def checkout(cart_id: int, cart_checkout: CartCheckout):
     except Exception as e:
         print(f"Error during checkout: {e}")
         return {"error": "Checkout failed due to an internal error."}
+
 
