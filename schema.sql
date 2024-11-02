@@ -42,6 +42,16 @@ CREATE TABLE carts (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     status TEXT DEFAULT 'active'
 );
+CREATE TABLE carts_items (
+    cart_id INT NOT NULL,
+    catalog_id INT NOT NULL,
+    quantity INT NOT NULL,
+    sku TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (cart_id, catalog_id),
+    FOREIGN KEY (cart_id) REFERENCES carts(id) ON DELETE CASCADE,
+    FOREIGN KEY (catalog_id) REFERENCES potion_catalog(id)
+);
 
 CREATE TABLE gold_ledger_entries (
     id SERIAL PRIMARY KEY,
