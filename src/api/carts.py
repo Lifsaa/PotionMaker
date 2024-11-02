@@ -132,8 +132,6 @@ def create_cart():
                 sqlalchemy.text("INSERT INTO carts (status) VALUES ('active') RETURNING id")
             )
             fetched = result.fetchone()
-            if fetched is None:
-                raise ValueError("Failed to create cart: No ID returned.")
             cart_id = fetched.id
             print(f"Created cart with ID: {cart_id}")
         return {"cart_id": cart_id}
@@ -141,34 +139,19 @@ def create_cart():
         print(f"Error creating cart: {e}")
         return {"error": "Failed to create cart."}
 
-
-
-
 @router.post("/{cart_id}/items/{item_sku}")
 def set_item_quantity(cart_id: int, item_sku: str, cart_item: CartItem):
-    """
-    Updates the quantity of a specific item in the cart.
-    """
     try:
         with db.engine.begin() as connection:
             cart = connection.execute(sqlalchemy.text("""
                 SELECT id FROM carts WHERE id = :cart_id FOR UPDATE
-            """), {"cart_id": cart_id}).fetchone()
+            """), {"cart_id": cart_id}).scalar_one()
 
-            if cart is None:
-                print(f"Cart with ID {cart_id} not found.")
-                return {"error": "Cart not found."}
+            catalog_item_id = connection.execute(sqlalchemy.text("""
+                SELECT id FROM potion_catalog WHERE sku = :item_sku FOR UPDATE
+            """), {"item_sku": item_sku}).scalar_one()
 
-            catalog_item = connection.execute(sqlalchemy.text("""
-                SELECT id, inventory FROM potion_catalog WHERE sku = :item_sku FOR UPDATE
-            """), {"item_sku": item_sku}).fetchone()
-
-            if catalog_item is None:
-                print(f"Item with SKU {item_sku} not found in catalog.")
-                return {"error": "Item not found in catalog."}
-
-            catalog_id = catalog_item.id
-            print(f"Updating cart_id {cart_id} with item_sku {item_sku} (catalog_id {catalog_id}) to quantity {cart_item.quantity}")
+            print(f"Updating cart_id {cart_id} with item_sku {item_sku} (catalog_id {catalog_item_id}) to quantity {cart_item.quantity}")
 
             connection.execute(sqlalchemy.text("""
                 INSERT INTO carts_items (cart_id, catalog_id, quantity, sku)
@@ -177,7 +160,7 @@ def set_item_quantity(cart_id: int, item_sku: str, cart_item: CartItem):
                 SET quantity = EXCLUDED.quantity
             """), {
                 "cart_id": cart_id,
-                "catalog_id": catalog_id,
+                "catalog_id": catalog_item_id,
                 "quantity": cart_item.quantity,
                 "item_sku": item_sku
             })
@@ -190,11 +173,6 @@ def set_item_quantity(cart_id: int, item_sku: str, cart_item: CartItem):
         return {"error": "Failed to set item quantity."}
 
 
-
-
-
-class CartCheckout(BaseModel):
-    payment: str
 
 class CartCheckout(BaseModel):
     payment: str
@@ -216,16 +194,16 @@ def checkout(cart_id: int, cart_checkout: CartCheckout):
                 return {"error": "Cart is empty"}
 
             total_gold_paid = sum(item.price * item.quantity for item in cart_items)
+            total_potions_bought = sum(item.quantity for item in cart_items)
 
             insufficient_inventory = []
             for item in cart_items:
-                ledger_result = connection.execute(sqlalchemy.text("""
+                current_inventory = connection.execute(sqlalchemy.text("""
                     SELECT COALESCE(SUM(change), 0) as total_inventory
                     FROM potion_inventory_ledger_entries
                     WHERE potion_catalog_id = :catalog_id
+                """), {"catalog_id": item.catalog_id}).scalar_one()
 
-                                                                                   """), {"catalog_id": item.catalog_id})
-                current_inventory = ledger_result.fetchone().total_inventory or 0
                 if current_inventory < item.quantity:
                     insufficient_inventory.append(item.sku)
 
@@ -233,10 +211,9 @@ def checkout(cart_id: int, cart_checkout: CartCheckout):
                 print(f"Insufficient inventory for SKUs: {insufficient_inventory}")
                 return {"error": f"Insufficient inventory for potions: {', '.join(insufficient_inventory)}"}
 
-            transaction_result = connection.execute(sqlalchemy.text("""
+            transaction_id = connection.execute(sqlalchemy.text("""
                 INSERT INTO transactions (description) VALUES (:description) RETURNING id
-            """), {"description": f"Cart checkout {cart_id}"})
-            transaction_id = transaction_result.fetchone().id
+            """), {"description": f"Cart checkout {cart_id}"}).scalar_one()
 
             for item in cart_items:
                 connection.execute(sqlalchemy.text("""
@@ -264,22 +241,22 @@ def checkout(cart_id: int, cart_checkout: CartCheckout):
                 WHERE id = :cart_id
             """), {"cart_id": cart_id})
 
-            connection.execute(sqlalchemy.text("""
-                DELETE FROM carts_items WHERE cart_id = :cart_id
-            """), {"cart_id": cart_id})
+            #connection.execute(sqlalchemy.text("""
+            #    DELETE FROM carts_items WHERE cart_id = :cart_id
+           # """), {"cart_id": cart_id})
 
-            gold_result = connection.execute(sqlalchemy.text("""
+            new_gold = connection.execute(sqlalchemy.text("""
                 SELECT COALESCE(SUM(change), 0) as gold_total FROM gold_ledger_entries
-            """))
-            new_gold = gold_result.fetchone().gold_total or 0
+            """)).scalar()
+
+        print("Checkout successful")
+        print(f"The total gold paid is: {total_gold_paid}")
+        print(f"The remaining gold is: {new_gold}")
 
         return {
-            "message": "Checkout successful",
             "total_gold_paid": total_gold_paid,
-            "remaining_gold": new_gold
+            "total_potion_bought": total_potions_bought
         }
     except Exception as e:
         print(f"Error during checkout: {e}")
         return {"error": "Checkout failed due to an internal error."}
-
-
