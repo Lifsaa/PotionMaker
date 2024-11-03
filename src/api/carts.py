@@ -255,7 +255,7 @@ def checkout(cart_id: int, cart_checkout: CartCheckout):
 
         return {
             "total_gold_paid": total_gold_paid,
-            "total_potion_bought": total_potions_bought
+            "total_potions_bought": total_potions_bought
         }
     except Exception as e:
         print(f"Error during checkout: {e}")
