@@ -105,31 +105,28 @@ def post_deliver_bottles(potions_delivered: List[PotionInventory], order_id: int
         print(f"Global inventory updated successfully via ledger entries.")
         return {"message": "Inventory updated successfully via ledger"}
 
-    
+
+
 @router.post("/plan")
 def get_bottle_plan():
     print("Generating bottling plan.")
     with db.engine.begin() as connection:
         ml_result = connection.execute(sqlalchemy.text("""
             SELECT 
-                COALESCE(SUM(red_ml_change), 0) as total_red_ml,
-                COALESCE(SUM(green_ml_change), 0) as total_green_ml,
-                COALESCE(SUM(blue_ml_change), 0) as total_blue_ml,
-                COALESCE(SUM(dark_ml_change), 0) as total_dark_ml
+                COALESCE(SUM(red_ml_change), 0) AS total_red_ml,
+                COALESCE(SUM(green_ml_change), 0) AS total_green_ml,
+                COALESCE(SUM(blue_ml_change), 0) AS total_blue_ml,
+                COALESCE(SUM(dark_ml_change), 0) AS total_dark_ml
             FROM ml_ledger_entries
         """)).fetchone()
 
-        if ml_result is None:
-            print("No ML ledger entries found.")
-            return {"error": "No ML inventory data found."}
-
         inventory = {
-            "red_ml": ml_result.total_red_ml,
-            "green_ml": ml_result.total_green_ml,
-            "blue_ml": ml_result.total_blue_ml,
-            "dark_ml": ml_result.total_dark_ml
+            "red_ml": ml_result[0],
+            "green_ml": ml_result[1],
+            "blue_ml": ml_result[2],
+            "dark_ml": ml_result[3]
         }
-        print(f"Current Inventory - Red ML: {inventory['red_ml']}, Green ML: {inventory['green_ml']}, Blue ML: {inventory['blue_ml']}, Dark ML: {inventory['dark_ml']}")
+        print(f"Current Inventory: {inventory}")
 
         potion_recipes = connection.execute(sqlalchemy.text("""
             SELECT id, red_component, green_component, blue_component, dark_component
@@ -138,60 +135,49 @@ def get_bottle_plan():
 
         print(f"Fetched Potion Recipes: {potion_recipes}")
 
-        max_potions_per_type = []
-        for recipe in potion_recipes:
-            potion_type = [recipe.red_component, recipe.green_component, recipe.blue_component, recipe.dark_component]
-            print(f"Evaluating Potion ID: {recipe.id}, Type: {potion_type}")
-            red_ml_required = recipe.red_component
-            green_ml_required = recipe.green_component
-            blue_ml_required = recipe.blue_component
-            dark_ml_required = recipe.dark_component
-
-            if red_ml_required == 0 and green_ml_required == 0 and blue_ml_required == 0 and dark_ml_required == 0:
-                print(f"Skipping Potion ID {recipe.id} because it requires no components.")
-                continue
-
-            max_potions = min(
-                inventory["red_ml"] // red_ml_required if red_ml_required > 0 else float('inf'),
-                inventory["green_ml"] // green_ml_required if green_ml_required > 0 else float('inf'),
-                inventory["blue_ml"] // blue_ml_required if blue_ml_required > 0 else float('inf'),
-                inventory["dark_ml"] // dark_ml_required if dark_ml_required > 0 else float('inf'),
-            )
-
-            max_potions_per_type.append({
-                "potion_id": recipe.id,
-                "potion_type": potion_type,
-                "max_quantity": int(max_potions),
-                "red_ml_required": red_ml_required,
-                "green_ml_required": green_ml_required,
-                "blue_ml_required": blue_ml_required,
-                "dark_ml_required": dark_ml_required
-            })
-            print(f"Max Potions for Potion ID {recipe.id}: {int(max_potions)}")
-
-        if not max_potions_per_type:
-            print("No potions can be produced with the current inventory.")
-            return {"message": "No potions can be produced with the current inventory."}
-
-        min_quantity = min(potion["max_quantity"] for potion in max_potions_per_type if potion["max_quantity"] > 0)
-        print(f"Equal quantity to produce for each potion: {min_quantity}")
-
         potion_plan = []
-        for potion in max_potions_per_type:
-            if potion["max_quantity"] >= min_quantity and min_quantity > 0:
-                potion_plan.append({
-                    "potion_id": potion["potion_id"],
-                    "potion_type": potion["potion_type"],
-                    "quantity": min_quantity
-                })
-                inventory["red_ml"] -= potion["red_ml_required"] * min_quantity
-                inventory["green_ml"] -= potion["green_ml_required"] * min_quantity
-                inventory["blue_ml"] -= potion["blue_ml_required"] * min_quantity
-                inventory["dark_ml"] -= potion["dark_ml_required"] * min_quantity
-                print(f"Added Potion ID {potion['potion_id']} to plan with quantity {min_quantity}.")
-                print(f"Updated Inventory: {inventory}")
-            else:
-                print(f"Potion ID {potion['potion_id']} cannot be produced in equal quantity due to inventory constraints.")
+        production_possible = True
+
+        while production_possible:
+            production_possible = False
+            for recipe in potion_recipes:
+                potion_id = recipe[0] 
+                red_ml_required = recipe[1]
+                green_ml_required = recipe[2]
+                blue_ml_required = recipe[3]
+                dark_ml_required = recipe[4]
+
+                potion_type = [red_ml_required, green_ml_required, blue_ml_required, dark_ml_required]
+
+                can_produce = (
+                    (red_ml_required <= inventory["red_ml"] or red_ml_required == 0) and
+                    (green_ml_required <= inventory["green_ml"] or green_ml_required == 0) and
+                    (blue_ml_required <= inventory["blue_ml"] or blue_ml_required == 0) and
+                    (dark_ml_required <= inventory["dark_ml"] or dark_ml_required == 0)
+                )
+
+                if can_produce:
+                    inventory["red_ml"] -= red_ml_required
+                    inventory["green_ml"] -= green_ml_required
+                    inventory["blue_ml"] -= blue_ml_required
+                    inventory["dark_ml"] -= dark_ml_required
+
+                    potion_in_plan = next((p for p in potion_plan if p["potion_type"] == potion_type), None)
+                    if potion_in_plan:
+                        potion_in_plan["quantity"] += 1
+                    else:
+                        potion_plan.append({
+                            "potion_type": potion_type,
+                            "quantity": 1
+                        })
+
+                    print(f"Produced 1 unit of Potion Type {potion_type}")
+                    print(f"Updated Inventory: {inventory}")
+                    production_possible = True
+
+            if not production_possible:
+                break
 
         print(f"Final Bottling Plan: {potion_plan}")
         return potion_plan
+
