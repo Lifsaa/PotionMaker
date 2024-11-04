@@ -138,8 +138,7 @@ def get_bottle_plan():
 
         print(f"Fetched Potion Recipes: {potion_recipes}")
 
-        potion_plan = []
-
+        max_potions_per_type = []
         for recipe in potion_recipes:
             potion_type = [recipe.red_component, recipe.green_component, recipe.blue_component, recipe.dark_component]
             print(f"Evaluating Potion ID: {recipe.id}, Type: {potion_type}")
@@ -149,6 +148,7 @@ def get_bottle_plan():
             dark_ml_required = recipe.dark_component
 
             if red_ml_required == 0 and green_ml_required == 0 and blue_ml_required == 0 and dark_ml_required == 0:
+                print(f"Skipping Potion ID {recipe.id} because it requires no components.")
                 continue
 
             max_potions = min(
@@ -158,15 +158,40 @@ def get_bottle_plan():
                 inventory["dark_ml"] // dark_ml_required if dark_ml_required > 0 else float('inf'),
             )
 
-            print(f"Max Potions for Potion ID {recipe.id}: {max_potions}")
+            max_potions_per_type.append({
+                "potion_id": recipe.id,
+                "potion_type": potion_type,
+                "max_quantity": int(max_potions),
+                "red_ml_required": red_ml_required,
+                "green_ml_required": green_ml_required,
+                "blue_ml_required": blue_ml_required,
+                "dark_ml_required": dark_ml_required
+            })
+            print(f"Max Potions for Potion ID {recipe.id}: {int(max_potions)}")
 
-            if max_potions > 0 and max_potions != float('inf'):
+        if not max_potions_per_type:
+            print("No potions can be produced with the current inventory.")
+            return {"message": "No potions can be produced with the current inventory."}
+
+        min_quantity = min(potion["max_quantity"] for potion in max_potions_per_type if potion["max_quantity"] > 0)
+        print(f"Equal quantity to produce for each potion: {min_quantity}")
+
+        potion_plan = []
+        for potion in max_potions_per_type:
+            if potion["max_quantity"] >= min_quantity and min_quantity > 0:
                 potion_plan.append({
-                    "potion_id": recipe.id,
-                    "potion_type": potion_type,
-                    "quantity": int(max_potions)
+                    "potion_id": potion["potion_id"],
+                    "potion_type": potion["potion_type"],
+                    "quantity": min_quantity
                 })
-                print(f"Added to Potion Plan: {potion_plan[-1]}")
+                inventory["red_ml"] -= potion["red_ml_required"] * min_quantity
+                inventory["green_ml"] -= potion["green_ml_required"] * min_quantity
+                inventory["blue_ml"] -= potion["blue_ml_required"] * min_quantity
+                inventory["dark_ml"] -= potion["dark_ml_required"] * min_quantity
+                print(f"Added Potion ID {potion['potion_id']} to plan with quantity {min_quantity}.")
+                print(f"Updated Inventory: {inventory}")
+            else:
+                print(f"Potion ID {potion['potion_id']} cannot be produced in equal quantity due to inventory constraints.")
 
         print(f"Final Bottling Plan: {potion_plan}")
         return potion_plan
