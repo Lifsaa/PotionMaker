@@ -14,20 +14,6 @@ CREATE TABLE potion_catalog (
 );
 
 
-CREATE TABLE global_inventory (
-    id SERIAL PRIMARY KEY,
-    num_red_ml INT,
-    num_green_ml INT,
-    num_blue_ml INT,
-    num_dark_ml INT,
-    num_red_potions INT NOT NULL,
-    num_green_potions INT NOT NULL,
-    num_blue_potions INT NOT NULL,
-    num_dark_potions INT NOT NULL,
-    gold INT,
-    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-);
-
 CREATE TABLE customer_info (
     id SERIAL PRIMARY KEY,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -85,4 +71,11 @@ CREATE TABLE transactions (
     id SERIAL PRIMARY KEY,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     description TEXT
+);
+CREATE TABLE capacity_purchases (
+    id SERIAL PRIMARY KEY,
+    transaction_id INT REFERENCES transactions(id),
+    potion_capacity INT DEFAULT 0,
+    ml_capacity INT DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
