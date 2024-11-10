@@ -5,7 +5,7 @@ from typing import List
 from enum import Enum
 import sqlalchemy
 from src import database as db
-from sqlalchemy import select, and_, or_, func, desc, asc
+from sqlalchemy import select, and_, or_, func, desc, asc,String
 import json
 import base64
 from datetime import datetime
@@ -36,67 +36,33 @@ def search_orders(
     sort_col: search_sort_options = search_sort_options.timestamp,
     sort_order: search_sort_order = search_sort_order.desc,
 ):
-    """
-    Search for cart line items by customer name and/or potion sku.
-
-    Customer name and potion sku filter to orders that contain the 
-    string (case insensitive). If the filters aren't provided, no
-    filtering occurs on the respective search term.
-    Search page is a cursor for pagination. The response to this
-    search endpoint will return previous or next if there is a
-    previous or next page of results available. The token passed
-    in that search response can be passed in the next search request
-    as search page to get that page of results.
-
-    Sort col is which column to sort by and sort order is the direction
-    of the search. They default to searching by timestamp of the order
-    in descending order.
-
-    The response itself contains a previous and next page token (if
-    such pages exist) and the results as an array of line items. Each
-    line item contains the line item id (must be unique), item sku, 
-    customer name, line item total (in gold), and timestamp of the order.
-    Your results must be paginated, the max results you can return at any
-    time is 5 total line items.
-    """
-
-
-
-@router.get("/search/", tags=["search"])
-def search_orders(
-    customer_name: str = "",
-    potion_sku: str = "",
-    search_page: str = "",
-    sort_col: search_sort_options = search_sort_options.timestamp,
-    sort_order: search_sort_order = search_sort_order.desc,
-):
- 
-
-    MAX_RESULTS = 5  
+    MAX_RESULTS = 5 
 
     try:
-        page = int(search_page)
+        page = int(search_page) if search_page else 1
         if page < 1:
             page = 1
     except (ValueError, TypeError):
-        page = 1   # if invalid input
+        page = 1
 
-    # Calculate offset
     offset = (page - 1) * MAX_RESULTS
 
-    # Building expr
-    line_item_total_expr = (carts_items.c.quantity * potion_catalog.c.price).label('line_item_total')
-    line_item_id_expr = func.concat(carts_items.c.cart_id, '-', carts_items.c.catalog_id).label('line_item_id')
+    line_item_id_expr = (carts_items.c.cart_id * 100000 + carts_items.c.catalog_id).label('line_item_id')
 
-    # Base query
+    item_sku_expr = func.concat(
+        carts_items.c.quantity.cast(String),
+        ' x ',
+        potion_catalog.c.name
+    ).label('item_sku')
+
+    line_item_total_expr = (carts_items.c.quantity * potion_catalog.c.price).label('line_item_total')
+
     query = select(
-        [
-            line_item_id_expr,
-            potion_catalog.c.sku.label('item_sku'),
-            customer_info.c.customer_name,
-            line_item_total_expr,
-            carts.c.created_at.label('timestamp')
-        ]
+        line_item_id_expr,
+        item_sku_expr,
+        customer_info.c.customer_name,
+        line_item_total_expr,
+        carts.c.created_at.label('timestamp')
     ).select_from(
         carts_items
         .join(carts, carts_items.c.cart_id == carts.c.id)
@@ -104,70 +70,64 @@ def search_orders(
         .join(customer_info, carts.c.customer_id == customer_info.c.id)
     )
 
-    #  filters
     if customer_name:
         query = query.where(customer_info.c.customer_name.ilike(f"%{customer_name}%"))
     if potion_sku:
         query = query.where(potion_catalog.c.sku.ilike(f"%{potion_sku}%"))
 
-    # sort options -> columns mappings
     sort_col_mapping = {
         "customer_name": customer_info.c.customer_name,
-        "item_sku": potion_catalog.c.sku,
+        "item_sku": item_sku_expr,
         "line_item_total": line_item_total_expr,
         "timestamp": carts.c.created_at
     }
+    sort_column = sort_col_mapping.get(sort_col.value, carts.c.created_at)
 
-    sort_col_expr = sort_col_mapping.get(sort_col.value, carts.c.created_at)
-
-    
     if sort_order == search_sort_order.asc:
-        order_func = asc
+        query = query.order_by(asc(sort_column), asc(line_item_id_expr))
     else:
-        order_func = desc
+        query = query.order_by(desc(sort_column), desc(line_item_id_expr))
 
-    query = query.order_by(
-        order_func(sort_col_expr),
-        order_func(line_item_id_expr)
-    )
-
-    #  limit and offset for pagination
-    query = query.limit(MAX_RESULTS + 1).offset(offset) 
+    query = query.limit(MAX_RESULTS + 1).offset(offset)
 
     with engine.connect() as conn:
-        result = conn.execute(query)
-        rows = result.fetchall()
+        rows = conn.execute(query).fetchall()
 
-    has_next = False
-    if len(rows) > MAX_RESULTS:
-        has_next = True
+    has_next = len(rows) > MAX_RESULTS
+    if has_next:
         rows = rows[:MAX_RESULTS]
 
     results = []
     for row in rows:
+        timestamp_str = row.timestamp.strftime('%Y-%m-%dT%H:%M:%SZ')  
         result_item = {
             "line_item_id": row.line_item_id,
             "item_sku": row.item_sku,
             "customer_name": row.customer_name,
-            "line_item_total": row.line_item_total,
-            "timestamp": row.timestamp.isoformat()
+            "line_item_total": int(row.line_item_total),
+            "timestamp": timestamp_str
         }
         results.append(result_item)
 
-    next_page = page + 1 if has_next else None
-    previous_page = page - 1 if page > 1 else None
+    base_path = "/carts/search/"
 
-    if page > 1 and not results:
-        previous_page = page - 1
-        next_page = None
+    query_params = f"customer_name={customer_name}&potion_sku={potion_sku}&sort_col={sort_col.value}&sort_order={sort_order.value}"
+
+    next_link = ""
+    if has_next:
+        next_page = page + 1
+        next_link = f"{base_path}?{query_params}&search_page={next_page}"
+
+    previous_link = ""
+    if page > 1:
+        prev_page = page - 1
+        previous_link = f"{base_path}?{query_params}&search_page={prev_page}"
 
     return {
-        "previous": previous_page,
-        "next": next_page,
+        "previous": previous_link,
+        "next": next_link,
         "results": results
     }
-
-    
 
 class Customer(BaseModel):
     customer_name: str
