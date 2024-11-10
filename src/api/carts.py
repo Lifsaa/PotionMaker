@@ -5,6 +5,12 @@ from typing import List
 from enum import Enum
 import sqlalchemy
 from src import database as db
+from sqlalchemy import select, and_, or_, func, desc, asc
+import json
+import base64
+from datetime import datetime
+from src.database import engine, customer_info, potion_catalog, carts, carts_items
+
 
 router = APIRouter(
     prefix="/carts",
@@ -36,7 +42,6 @@ def search_orders(
     Customer name and potion sku filter to orders that contain the 
     string (case insensitive). If the filters aren't provided, no
     filtering occurs on the respective search term.
-
     Search page is a cursor for pagination. The response to this
     search endpoint will return previous or next if there is a
     previous or next page of results available. The token passed
@@ -55,20 +60,114 @@ def search_orders(
     time is 5 total line items.
     """
 
-    return {
-        "previous": "",
-        "next": "",
-        "results": [
-            {
-                "line_item_id": 1,
-                "item_sku": "1 oblivion potion",
-                "customer_name": "Scaramouche",
-                "line_item_total": 50,
-                "timestamp": "2021-01-01T00:00:00Z",
-            }
-        ],
+
+
+@router.get("/search/", tags=["search"])
+def search_orders(
+    customer_name: str = "",
+    potion_sku: str = "",
+    search_page: str = "",
+    sort_col: search_sort_options = search_sort_options.timestamp,
+    sort_order: search_sort_order = search_sort_order.desc,
+):
+ 
+
+    MAX_RESULTS = 5  
+
+    try:
+        page = int(search_page)
+        if page < 1:
+            page = 1
+    except (ValueError, TypeError):
+        page = 1   # if invalid input
+
+    # Calculate offset
+    offset = (page - 1) * MAX_RESULTS
+
+    # Building expr
+    line_item_total_expr = (carts_items.c.quantity * potion_catalog.c.price).label('line_item_total')
+    line_item_id_expr = func.concat(carts_items.c.cart_id, '-', carts_items.c.catalog_id).label('line_item_id')
+
+    # Base query
+    query = select(
+        [
+            line_item_id_expr,
+            potion_catalog.c.sku.label('item_sku'),
+            customer_info.c.customer_name,
+            line_item_total_expr,
+            carts.c.created_at.label('timestamp')
+        ]
+    ).select_from(
+        carts_items
+        .join(carts, carts_items.c.cart_id == carts.c.id)
+        .join(potion_catalog, carts_items.c.catalog_id == potion_catalog.c.id)
+        .join(customer_info, carts.c.customer_id == customer_info.c.id)
+    )
+
+    #  filters
+    if customer_name:
+        query = query.where(customer_info.c.customer_name.ilike(f"%{customer_name}%"))
+    if potion_sku:
+        query = query.where(potion_catalog.c.sku.ilike(f"%{potion_sku}%"))
+
+    # sort options -> columns mappings
+    sort_col_mapping = {
+        "customer_name": customer_info.c.customer_name,
+        "item_sku": potion_catalog.c.sku,
+        "line_item_total": line_item_total_expr,
+        "timestamp": carts.c.created_at
     }
 
+    sort_col_expr = sort_col_mapping.get(sort_col.value, carts.c.created_at)
+
+    
+    if sort_order == search_sort_order.asc:
+        order_func = asc
+    else:
+        order_func = desc
+
+    query = query.order_by(
+        order_func(sort_col_expr),
+        order_func(line_item_id_expr)
+    )
+
+    #  limit and offset for pagination
+    query = query.limit(MAX_RESULTS + 1).offset(offset) 
+
+    with engine.connect() as conn:
+        result = conn.execute(query)
+        rows = result.fetchall()
+
+    has_next = False
+    if len(rows) > MAX_RESULTS:
+        has_next = True
+        rows = rows[:MAX_RESULTS]
+
+    results = []
+    for row in rows:
+        result_item = {
+            "line_item_id": row.line_item_id,
+            "item_sku": row.item_sku,
+            "customer_name": row.customer_name,
+            "line_item_total": row.line_item_total,
+            "timestamp": row.timestamp.isoformat()
+        }
+        results.append(result_item)
+
+    next_page = page + 1 if has_next else None
+    previous_page = page - 1 if page > 1 else None
+
+    if page > 1 and not results:
+        previous_page = page - 1
+        next_page = None
+
+    return {
+        "previous": previous_page,
+        "next": next_page,
+        "results": results
+    }
+
+    
 
 class Customer(BaseModel):
     customer_name: str
@@ -93,10 +192,10 @@ def post_visits(visit_id: int, customers: List[Customer]):
             if existing_customer:
                 connection.execute(sqlalchemy.text("""
                     UPDATE customer_info
-                    SET character_class = :character_class, level = :level
+                    SET customer_class = :customer_class, level = :level
                     WHERE id = :customer_id
                 """), {
-                    "character_class": customer.character_class,
+                    "customer_class": customer.character_class,
                     "level": customer.level,
                     "customer_id": existing_customer.id
                 })
