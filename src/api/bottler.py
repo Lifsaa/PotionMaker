@@ -109,117 +109,91 @@ def post_deliver_bottles(potions_delivered: List[PotionInventory], order_id: int
 
 @router.post("/plan")
 def get_bottle_plan():
-    print("Generating bottling plan.")
-    with db.engine.begin() as connection:
-        ml_result = connection.execute(sqlalchemy.text("""
-            SELECT 
-                COALESCE(SUM(red_ml_change), 0) AS total_red_ml,
-                COALESCE(SUM(green_ml_change), 0) AS total_green_ml,
-                COALESCE(SUM(blue_ml_change), 0) AS total_blue_ml,
-                COALESCE(SUM(dark_ml_change), 0) AS total_dark_ml
-            FROM ml_ledger_entries
-        """)).fetchone()
+    """
+    Generate a bottling plan based on available ML inventory and potion recipes.
+    Each potion can be produced up to a maximum of 50 units.
+    """
+    print("Starting bottling plan generation.")
+    try:
+        with db.engine.begin() as connection:
+            ml_result = connection.execute(sqlalchemy.text("""
+                SELECT 
+                    COALESCE(SUM(red_ml_change), 0) AS total_red_ml,
+                    COALESCE(SUM(green_ml_change), 0) AS total_green_ml,
+                    COALESCE(SUM(blue_ml_change), 0) AS total_blue_ml,
+                    COALESCE(SUM(dark_ml_change), 0) AS total_dark_ml
+                FROM ml_ledger_entries
+            """)).fetchone()
 
-        inventory = {
-            "red_ml": ml_result[0],
-            "green_ml": ml_result[1],
-            "blue_ml": ml_result[2],
-            "dark_ml": ml_result[3]
-        }
-        print(f"Current Inventory (in ml): {inventory}")
+            inventory = {
+                "red_ml": ml_result[0],
+                "green_ml": ml_result[1],
+                "blue_ml": ml_result[2],
+                "dark_ml": ml_result[3]
+            }
 
-        potion_recipes = connection.execute(sqlalchemy.text("""
-            SELECT id, red_component, green_component, blue_component, dark_component
-            FROM potion_catalog
-        """)).fetchall()
+            potion_recipes = connection.execute(sqlalchemy.text("""
+                SELECT id, red_component, green_component, blue_component, dark_component
+                FROM potion_catalog
+            """)).fetchall()
 
-        print("Fetched Potion Recipes:")
-        for potion in potion_recipes:
-            print(f"Potion ID {potion[0]}: Components (Red: {potion[1]}, Green: {potion[2]}, Blue: {potion[3]}, Dark: {potion[4]})")
+            potion_quantities = {potion[0]: 0 for potion in potion_recipes}  
+            potion_types = {potion[0]: [potion[1], potion[2], potion[3], potion[4]] for potion in potion_recipes} 
 
-        potion_quantities = {potion[0]: 0 for potion in potion_recipes}  
-        potion_types = {potion[0]: [potion[1], potion[2], potion[3], potion[4]] for potion in potion_recipes} 
+            potion_plan = []
+            production_possible = True
 
-        print("Initializing potion quantities to zero for each potion.")
+            while production_possible:
+                production_possible = False
 
-        potion_plan = []
+                available_potions = [potion for potion in potion_recipes if potion_quantities[potion[0]] < 50]
 
-        production_possible = True
+                if not available_potions:
+                    break  
 
-        while production_possible:
-            production_possible = False
+                available_potions.sort(key=lambda potion: potion_quantities[potion[0]])
 
-            available_potions = [potion for potion in potion_recipes if potion_quantities[potion[0]] < 50]
+                for recipe in available_potions:
+                    potion_id = recipe[0]
+                    red_ml_required, green_ml_required, blue_ml_required, dark_ml_required = recipe[1:]
 
-            if not available_potions:
-                print("All potions have reached the maximum quantity of 50.")
-                break  
-            available_potions.sort(key=lambda potion: potion_quantities[potion[0]])
+                    if (
+                        (red_ml_required <= inventory["red_ml"] or red_ml_required == 0) and
+                        (green_ml_required <= inventory["green_ml"] or green_ml_required == 0) and
+                        (blue_ml_required <= inventory["blue_ml"] or blue_ml_required == 0) and
+                        (dark_ml_required <= inventory["dark_ml"] or dark_ml_required == 0)
+                    ):
+                        inventory["red_ml"] -= red_ml_required
+                        inventory["green_ml"] -= green_ml_required
+                        inventory["blue_ml"] -= blue_ml_required
+                        inventory["dark_ml"] -= dark_ml_required
 
-            print("Available potions for production (potions below 50 units):")
-            for potion in available_potions:
-                potion_id = potion[0]
-                quantity = potion_quantities[potion_id]
-                print(f"Potion ID {potion_id}: Current Quantity {quantity}")
+                        potion_quantities[potion_id] += 1
+                        potion_type = potion_types[potion_id]
 
-            for recipe in available_potions:
-                potion_id = recipe[0]
-                red_ml_required = recipe[1]
-                green_ml_required = recipe[2]
-                blue_ml_required = recipe[3]
-                dark_ml_required = recipe[4]
+                        potion_in_plan = next((p for p in potion_plan if p["potion_type"] == potion_type), None)
+                        if potion_in_plan:
+                            potion_in_plan["quantity"] += 1
+                        else:
+                            potion_plan.append({
+                                "potion_type": potion_type,
+                                "quantity": 1
+                            })
 
-                potion_type = [red_ml_required, green_ml_required, blue_ml_required, dark_ml_required]
-
-                print(f"Attempting to produce Potion ID {potion_id}: Requires {potion_type} ml.")
-
-                can_produce = (
-                    (red_ml_required <= inventory["red_ml"] or red_ml_required == 0) and
-                    (green_ml_required <= inventory["green_ml"] or green_ml_required == 0) and
-                    (blue_ml_required <= inventory["blue_ml"] or blue_ml_required == 0) and
-                    (dark_ml_required <= inventory["dark_ml"] or dark_ml_required == 0)
-                )
-
-                if can_produce:
-                    inventory["red_ml"] -= red_ml_required
-                    inventory["green_ml"] -= green_ml_required
-                    inventory["blue_ml"] -= blue_ml_required
-                    inventory["dark_ml"] -= dark_ml_required
-
-                    potion_quantities[potion_id] += 1
-
-                    potion_in_plan = next((p for p in potion_plan if p["potion_type"] == potion_type), None)
-                    if potion_in_plan:
-                        potion_in_plan["quantity"] += 1
+                        production_possible = True
+                        break  
                     else:
-                        potion_plan.append({
-                            "potion_type": potion_type,
-                            "quantity": 1
-                        })
+                        continue 
 
-                    print(f"Produced 1 unit of Potion ID {potion_id}.")
-                    print(f"Updated Inventory (in ml): {inventory}")
-                    print(f"Updated Potion Quantities: {potion_quantities}")
+                if not production_possible:
+                    break
 
-                    production_possible = True
-
-                    break 
-
-                else:
-                    print(f"Cannot produce Potion ID {potion_id} due to insufficient inventory.")
-
-            if not production_possible:
-                print("No more potions can be produced with the available inventory.")
-                break
-
-        print("Final Bottling Plan:")
-        for potion in potion_plan:
-            potion_type = potion["potion_type"]
-            quantity = potion["quantity"]
-            print(f"Potion Type {potion_type}: Quantity {quantity}")
-
-        print("Final Potion Quantities:")
-        for potion_id, quantity in potion_quantities.items():
-            print(f"Potion ID {potion_id}: Quantity {quantity}")
+        print("Bottling Plan Complete.")
+        print("Final Inventory (in ml):", inventory)
+        print("Final Potion Quantities:", potion_quantities)
 
         return potion_plan
+
+    except Exception as e:
+        print(f"Error generating bottling plan: {e}")
+        return {"status": "error", "message": "An error occurred while generating the bottling plan."}
