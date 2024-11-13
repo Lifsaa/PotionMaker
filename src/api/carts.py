@@ -183,16 +183,31 @@ class CartItem(BaseModel):
 @router.post("/")
 def create_cart():
     """
-    Create a new cart and set the status to 'active'.
+    Create a new cart and set the status to 'active', associating it with an existing customer_id.
     """
     try:
         with db.engine.begin() as connection:
+            customer = connection.execute(
+                sqlalchemy.text("SELECT id FROM customer_info LIMIT 1")
+            ).fetchone()
+
+            if not customer:
+                print("No customers found. Please add a customer first.")
+                return {"error": "No customers available. Please add a customer first."}
+
+            customer_id = customer.id
+
             result = connection.execute(
-                sqlalchemy.text("INSERT INTO carts (status) VALUES ('active') RETURNING id")
+                sqlalchemy.text("""
+                    INSERT INTO carts (status, customer_id) 
+                    VALUES ('active', :customer_id) 
+                    RETURNING id
+                """),
+                {"customer_id": customer_id}
             )
             fetched = result.fetchone()
             cart_id = fetched.id
-            print(f"Created cart with ID: {cart_id}")
+            print(f"Created cart with ID: {cart_id} for customer_id {customer_id}")
         return {"cart_id": cart_id}
     except Exception as e:
         print(f"Error creating cart: {e}")
