@@ -132,76 +132,79 @@ def post_deliver_barrels(barrels_delivered: List[Barrel], order_id: int):
 # Gets called once a day
 @router.post("/plan")
 def get_wholesale_purchase_plan(wholesale_catalog: List[Barrel]): 
-    print("Generating optimized wholesale purchase plan.")
-    with db.engine.begin() as connection:
-        gold_result = connection.execute(sqlalchemy.text("""
-            SELECT COALESCE(SUM(change), 0) AS gold_total FROM gold_ledger_entries
-        """))
-        gold = gold_result.fetchone().gold_total or 0
-        print(f"Current Gold: {gold}")
+    try:
+        print("Generating optimized wholesale purchase plan.")
+        with db.engine.begin() as connection:
+            gold_result = connection.execute(sqlalchemy.text("""
+                SELECT COALESCE(SUM(change), 0) AS gold_total FROM gold_ledger_entries
+            """))
+            gold = gold_result.fetchone().gold_total or 0
+            print(f"Current Gold: {gold}")
 
-        ml_result = connection.execute(sqlalchemy.text("""
-            SELECT 
-                COALESCE(SUM(red_ml_change), 0) AS red_ml_total,
-                COALESCE(SUM(green_ml_change), 0) AS green_ml_total,
-                COALESCE(SUM(blue_ml_change), 0) AS blue_ml_total,
-                COALESCE(SUM(dark_ml_change), 0) AS dark_ml_total
-            FROM ml_ledger_entries 
-        """)).fetchone()
+            ml_result = connection.execute(sqlalchemy.text("""
+                SELECT 
+                    COALESCE(SUM(red_ml_change), 0) AS red_ml_total,
+                    COALESCE(SUM(green_ml_change), 0) AS green_ml_total,
+                    COALESCE(SUM(blue_ml_change), 0) AS blue_ml_total,
+                    COALESCE(SUM(dark_ml_change), 0) AS dark_ml_total
+                FROM ml_ledger_entries 
+            """)).fetchone()
 
-        ml_inventory = {
-            "red": ml_result.red_ml_total or 0,
-            "green": ml_result.green_ml_total or 0,
-            "blue": ml_result.blue_ml_total or 0,
-            "dark": ml_result.dark_ml_total or 0
-        }
+            ml_inventory = {
+                "red": ml_result.red_ml_total or 0,
+                "green": ml_result.green_ml_total or 0,
+                "blue": ml_result.blue_ml_total or 0,
+                "dark": ml_result.dark_ml_total or 0
+            }
 
-        ml_threshold = 1000  
-        ml_needs = [color for color, amount in ml_inventory.items() if amount < ml_threshold]
+            ml_threshold = 1000  
+            ml_needs = [color for color, amount in ml_inventory.items() if amount < ml_threshold]
 
+            barrel_vars = {}
+            for barrel in wholesale_catalog:
+                ml_type = ''
+                if barrel.potion_type == [1, 0, 0, 0]:
+                    ml_type = 'red'
+                elif barrel.potion_type == [0, 1, 0, 0]:
+                    ml_type = 'green'
+                elif barrel.potion_type == [0, 0, 1, 0]:
+                    ml_type = 'blue'
+                elif barrel.potion_type == [0, 0, 0, 1]:
+                    ml_type = 'dark'
 
-        barrel_vars = {}
-        for barrel in wholesale_catalog:
-            ml_type = ''
-            if barrel.potion_type == [1, 0, 0, 0]:
-                ml_type = 'red'
-            elif barrel.potion_type == [0, 1, 0, 0]:
-                ml_type = 'green'
-            elif barrel.potion_type == [0, 0, 1, 0]:
-                ml_type = 'blue'
-            elif barrel.potion_type == [0, 0, 0, 1]:
-                ml_type = 'dark'
+                if ml_type in ml_needs:
+                    max_quantity = barrel.quantity
+                    var = LpVariable(f"b_{barrel.sku}", lowBound=0, upBound=max_quantity, cat=LpInteger)
+                    barrel_vars[barrel.sku] = {
+                        "variable": var,
+                        "barrel": barrel,
+                        "ml_type": ml_type
+                    }
 
-            if ml_type in ml_needs:
-                max_quantity = barrel.quantity
-                var = LpVariable(f"b_{barrel.sku}", lowBound=0, upBound=max_quantity, cat=LpInteger)
-                barrel_vars[barrel.sku] = {
-                    "variable": var,
-                    "barrel": barrel,
-                    "ml_type": ml_type
-                }
+            if not barrel_vars:
+                print("No barrels needed or affordable.")
+                return []
 
-        if not barrel_vars:
-            print("No barrels needed or affordable.")
-            return []
+            prob += lpSum([
+                var["barrel"].ml_per_barrel * var["variable"]
+                for var in barrel_vars.values()
+            ])
 
-        prob += lpSum([
-            var["barrel"].ml_per_barrel * var["variable"]
-            for var in barrel_vars.values()
-        ])
+            prob += lpSum([
+                var["barrel"].price * var["variable"]
+                for var in barrel_vars.values()
+            ]) <= gold, "GoldConstraint"
 
-        prob += lpSum([
-            var["barrel"].price * var["variable"]
-            for var in barrel_vars.values()
-        ]) <= gold, "GoldConstraint"
+            prob.solve()
 
-        prob.solve()
+            purchase_plan = []
+            for sku, var in barrel_vars.items():
+                quantity = int(var["variable"].varValue)
+                if quantity > 0:
+                    purchase_plan.append({"sku": sku, "quantity": quantity})
 
-        purchase_plan = []
-        for sku, var in barrel_vars.items():
-            quantity = int(var["variable"].varValue)
-            if quantity > 0:
-                purchase_plan.append({"sku": sku, "quantity": quantity})
-
-        print(f"Final Purchase Plan: {purchase_plan}")
-        return purchase_plan
+            print(f"Final Purchase Plan: {purchase_plan}")
+            return purchase_plan
+    except Exception as e:
+        print(f"Error generating wholesale purchase plan: {e}")
+        return {"status": "error", "message": "An error occurred while generating the wholesale purchase plan."}
