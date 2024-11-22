@@ -5,6 +5,8 @@ from src.api import auth
 import sqlalchemy
 from typing import List
 from src import database as db
+from pulp import LpMaximize, LpProblem, LpVariable, lpSum, LpInteger
+
 
 router = APIRouter(
     prefix="/bottler",
@@ -22,8 +24,33 @@ class PotionInventory(BaseModel):
 def post_deliver_bottles(potions_delivered: List[PotionInventory], order_id: int):
     print(f"Delivering potions for Order ID: {order_id}")
     print(f"Potions to deliver: {potions_delivered}")
-    
+
     with db.engine.begin() as connection:
+        
+        potion_inventory_result = connection.execute(sqlalchemy.text("""
+            SELECT 
+                potion_catalog_id, 
+                COALESCE(SUM(change), 0) AS total_inventory
+            FROM potion_inventory_ledger_entries
+            GROUP BY potion_catalog_id
+        """)).fetchall()
+        current_potion_inventory = {row.potion_catalog_id: row.total_inventory for row in potion_inventory_result}
+
+        capacity_result = connection.execute(sqlalchemy.text("""
+            SELECT COALESCE(SUM(potion_capacity), 0) AS total_potion_capacity
+            FROM capacity_purchases
+        """)).fetchone()
+        total_potion_capacity_units = 1 + (capacity_result.total_potion_capacity or 0)
+        total_potion_capacity = total_potion_capacity_units * 50
+
+        total_potions_in_inventory = sum(current_potion_inventory.values())
+        total_potions_to_add = sum(potion.quantity for potion in potions_delivered)
+        new_total_potions = total_potions_in_inventory + total_potions_to_add
+
+        if new_total_potions > total_potion_capacity:
+            print(f"Cannot add potions. Current inventory: {total_potions_in_inventory}, Potions to add: {total_potions_to_add}, Capacity: {total_potion_capacity}")
+            return {"error": "Cannot exceed potion inventory capacity."}
+
         transaction_result = connection.execute(sqlalchemy.text("""
             INSERT INTO transactions (description) VALUES (:description) RETURNING id
         """), {"description": f"Bottler delivery order {order_id}"})
@@ -31,20 +58,20 @@ def post_deliver_bottles(potions_delivered: List[PotionInventory], order_id: int
 
         ml_result = connection.execute(sqlalchemy.text("""
             SELECT 
-                COALESCE(SUM(red_ml_change), 0) as red_ml_total,
-                COALESCE(SUM(green_ml_change), 0) as green_ml_total,
-                COALESCE(SUM(blue_ml_change), 0) as blue_ml_total,
-                COALESCE(SUM(dark_ml_change), 0) as dark_ml_total
+                COALESCE(SUM(red_ml_change), 0) AS red_ml_total,
+                COALESCE(SUM(green_ml_change), 0) AS green_ml_total,
+                COALESCE(SUM(blue_ml_change), 0) AS blue_ml_total,
+                COALESCE(SUM(dark_ml_change), 0) AS dark_ml_total
             FROM ml_ledger_entries 
         """)).fetchone()
 
-        inventory = {
-            "red_ml": ml_result.red_ml_total,
-            "green_ml": ml_result.green_ml_total,
-            "blue_ml": ml_result.blue_ml_total,
-            "dark_ml": ml_result.dark_ml_total
+        ml_inventory = {
+            "red": ml_result.red_ml_total or 0,
+            "green": ml_result.green_ml_total or 0,
+            "blue": ml_result.blue_ml_total or 0,
+            "dark": ml_result.dark_ml_total or 0
         }
-        print(f"Initial ML Inventory: {inventory}")
+        print(f"Initial ML Inventory: {ml_inventory}")
 
         for potion in potions_delivered:
             print(f"Processing Potion Type: {potion.potion_type}, Quantity: {potion.quantity}")
@@ -68,17 +95,19 @@ def post_deliver_bottles(potions_delivered: List[PotionInventory], order_id: int
             blue_ml_required = potion_recipe.blue_component * potion.quantity
             dark_ml_required = potion_recipe.dark_component * potion.quantity
 
-            if (inventory["red_ml"] < red_ml_required or
-                inventory["green_ml"] < green_ml_required or
-                inventory["blue_ml"] < blue_ml_required or
-                inventory["dark_ml"] < dark_ml_required):
-                print("Insufficient ML in inventory after deduction.")
+            if (
+                ml_inventory["red"] < red_ml_required or
+                ml_inventory["green"] < green_ml_required or
+                ml_inventory["blue"] < blue_ml_required or
+                ml_inventory["dark"] < dark_ml_required
+            ):
+                print("Insufficient ML in inventory for potion production.")
                 return {"error": "Insufficient ml in inventory"}
 
-            inventory["red_ml"] -= red_ml_required
-            inventory["green_ml"] -= green_ml_required
-            inventory["blue_ml"] -= blue_ml_required
-            inventory["dark_ml"] -= dark_ml_required
+            ml_inventory["red"] -= red_ml_required
+            ml_inventory["green"] -= green_ml_required
+            ml_inventory["blue"] -= blue_ml_required
+            ml_inventory["dark"] -= dark_ml_required
 
             connection.execute(sqlalchemy.text("""
                 INSERT INTO ml_ledger_entries (transaction_id, red_ml_change, green_ml_change, blue_ml_change, dark_ml_change, description)
@@ -110,10 +139,9 @@ def post_deliver_bottles(potions_delivered: List[PotionInventory], order_id: int
 @router.post("/plan")
 def get_bottle_plan():
     """
-    Generate a bottling plan based on available ML inventory and potion recipes.
-    Each potion can be produced up to a maximum of 50 units.
+    Generate an optimal bottling plan using Integer Linear Programming to maximize profit.
     """
-    print("Starting bottling plan generation.")
+    print("Starting optimized bottling plan generation.")
     try:
         with db.engine.begin() as connection:
             ml_result = connection.execute(sqlalchemy.text("""
@@ -125,75 +153,101 @@ def get_bottle_plan():
                 FROM ml_ledger_entries
             """)).fetchone()
 
-            inventory = {
-                "red_ml": ml_result[0],
-                "green_ml": ml_result[1],
-                "blue_ml": ml_result[2],
-                "dark_ml": ml_result[3]
+            ml_inventory = {
+                "red": ml_result.total_red_ml or 0,
+                "green": ml_result.total_green_ml or 0,
+                "blue": ml_result.total_blue_ml or 0,
+                "dark": ml_result.total_dark_ml or 0
             }
 
             potion_recipes = connection.execute(sqlalchemy.text("""
-                SELECT id, red_component, green_component, blue_component, dark_component
+                SELECT 
+                    id, name, red_component, green_component, blue_component, dark_component, price
                 FROM potion_catalog
             """)).fetchall()
 
-            potion_quantities = {potion[0]: 0 for potion in potion_recipes}  
-            potion_types = {potion[0]: [potion[1], potion[2], potion[3], potion[4]] for potion in potion_recipes} 
+            potion_inventory_result = connection.execute(sqlalchemy.text("""
+                SELECT 
+                    potion_catalog_id, 
+                    COALESCE(SUM(change), 0) AS total_inventory
+                FROM potion_inventory_ledger_entries
+                GROUP BY potion_catalog_id
+            """)).fetchall()
+            current_potion_inventory = {row.potion_catalog_id: row.total_inventory for row in potion_inventory_result}
 
-            potion_plan = []
-            production_possible = True
+            capacity_result = connection.execute(sqlalchemy.text("""
+                SELECT COALESCE(SUM(potion_capacity), 0) AS total_potion_capacity
+                FROM capacity_purchases
+            """)).fetchone()
+            total_potion_capacity_units = 1 + (capacity_result.total_potion_capacity or 0)
+            total_potion_capacity = total_potion_capacity_units * 50
 
-            while production_possible:
-                production_possible = False
+            total_potions_in_inventory = sum(current_potion_inventory.values())
+            available_capacity = total_potion_capacity - total_potions_in_inventory
 
-                available_potions = [potion for potion in potion_recipes if potion_quantities[potion[0]] < 50]
+            if available_capacity <= 0:
+                print("No available capacity for new potions.")
+                return [] 
 
-                if not available_potions:
-                    break  
+            prob = LpProblem("Potion_Production", LpMaximize)
 
-                available_potions.sort(key=lambda potion: potion_quantities[potion[0]])
+            potion_vars = {}
+            for potion in potion_recipes:
+                current_inventory = current_potion_inventory.get(potion.id, 0)
+                max_possible = min(50 - current_inventory, available_capacity)
+                if max_possible <= 0:
+                    continue
+                var = LpVariable(f"x_{potion.id}", lowBound=0, upBound=max_possible, cat=LpInteger)
+                potion_vars[potion.id] = {
+                    "variable": var,
+                    "data": potion
+                }
 
-                for recipe in available_potions:
-                    potion_id = recipe[0]
-                    red_ml_required, green_ml_required, blue_ml_required, dark_ml_required = recipe[1:]
+            if not potion_vars:
+                print("No potions can be produced within capacity constraints.")
+                return []
 
-                    if (
-                        (red_ml_required <= inventory["red_ml"] or red_ml_required == 0) and
-                        (green_ml_required <= inventory["green_ml"] or green_ml_required == 0) and
-                        (blue_ml_required <= inventory["blue_ml"] or blue_ml_required == 0) and
-                        (dark_ml_required <= inventory["dark_ml"] or dark_ml_required == 0)
-                    ):
-                        inventory["red_ml"] -= red_ml_required
-                        inventory["green_ml"] -= green_ml_required
-                        inventory["blue_ml"] -= blue_ml_required
-                        inventory["dark_ml"] -= dark_ml_required
+            # Objective function: Maximize total profit
+            prob += lpSum([potion_vars[potion_id]["data"].price * var["variable"]
+                           for potion_id, var in potion_vars.items()])
 
-                        potion_quantities[potion_id] += 1
-                        potion_type = potion_types[potion_id]
+            # Constraints:
+            prob += lpSum([var["variable"] for var in potion_vars.values()]) <= available_capacity, "TotalCapacity"
 
-                        potion_in_plan = next((p for p in potion_plan if p["potion_type"] == potion_type), None)
-                        if potion_in_plan:
-                            potion_in_plan["quantity"] += 1
-                        else:
-                            potion_plan.append({
-                                "potion_type": potion_type,
-                                "quantity": 1
-                            })
+            # ML constraints
+            for ml_type in ['red', 'green', 'blue', 'dark']:
+                prob += lpSum([
+                    getattr(var["data"], f"{ml_type}_component") * var["variable"]
+                    for var in potion_vars.values()
+                ]) <= ml_inventory[ml_type], f"{ml_type.capitalize()}MLConstraint"
 
-                        production_possible = True
-                        break  
-                    else:
-                        continue 
+            # Per-potion type limit
+            for potion_id, var in potion_vars.items():
+                current_inventory = current_potion_inventory.get(potion_id, 0)
+                prob += var["variable"] + current_inventory <= 50, f"PerPotionLimit_{potion_id}"
 
-                if not production_possible:
-                    break
+            prob.solve()
 
-        print("Bottling Plan Complete.")
-        print("Final Inventory (in ml):", inventory)
-        print("Final Potion Quantities:", potion_quantities)
+            production_plan = []
+            for potion_id, var in potion_vars.items():
+                quantity = int(var["variable"].varValue)
+                if quantity > 0:
+                    potion_data = var["data"]
+                    production_plan.append({
+                        "potion_type": [
+                            potion_data.red_component,
+                            potion_data.green_component,
+                            potion_data.blue_component,
+                            potion_data.dark_component
+                        ],
+                        "quantity": quantity
+                    })
 
-        return potion_plan
+            print("Optimized Bottling Plan Complete.")
+            print("Production Plan:", production_plan)
+
+            return production_plan
 
     except Exception as e:
-        print(f"Error generating bottling plan: {e}")
+        print(f"Error generating optimized bottling plan: {e}")
         return {"status": "error", "message": "An error occurred while generating the bottling plan."}

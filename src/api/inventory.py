@@ -138,12 +138,19 @@ def get_capacity_plan():
         ml_capacity_to_buy = 0
 
         threshold = 0.8 
+        UNIT_COST = 1000
 
-        if potion_capacity_usage > threshold:
+        gold_result = connection.execute(sqlalchemy.text("""
+            SELECT COALESCE(SUM(change), 0) as gold_total FROM gold_ledger_entries
+        """))
+        total_gold = gold_result.fetchone().gold_total or 0
+        print(f"Total gold available: {total_gold}")
+
+        if potion_capacity_usage > threshold and total_gold >= UNIT_COST:
             potion_capacity_to_buy = 1
             print("Potion capacity exceeds 80%, planning to buy 1 more capacity unit.")
 
-        if ml_capacity_usage > threshold:
+        if ml_capacity_usage > threshold and total_gold >= UNIT_COST:
             ml_capacity_to_buy = 1
             print("ML capacity exceeds 80%, planning to buy 1 more capacity unit.")
 
@@ -165,10 +172,10 @@ def deliver_capacity_plan(capacity_purchase: CapacityPurchase):
     ml_capacity = capacity_purchase.ml_capacity
 
     if potion_capacity == 0 and ml_capacity == 0:
-        return {"status": "error", "message": "No capacity units requested for purchase."}
+        raise ValueError("No capacity units requested for purchase.")
 
     if potion_capacity < 0 or ml_capacity < 0:
-        return {"status": "error", "message": "Capacity units cannot be negative."}
+        raise ValueError("Capacity units cannot be negative.")
 
     total_units = potion_capacity + ml_capacity
     total_cost = total_units * 1000
@@ -181,6 +188,7 @@ def deliver_capacity_plan(capacity_purchase: CapacityPurchase):
         with db.engine.begin() as connection:
             gold_result = connection.execute(sqlalchemy.text("""
                 SELECT COALESCE(SUM(change), 0) as gold_total FROM gold_ledger_entries
+                FOR UPDATE
             """)).fetchone()
             total_gold = gold_result.gold_total or 0
 
@@ -188,7 +196,7 @@ def deliver_capacity_plan(capacity_purchase: CapacityPurchase):
 
             if total_gold < total_cost:
                 print("Not enough gold to purchase capacity.")
-                return {"status": "error", "message": "Insufficient gold to complete the purchase."}
+                raise Exception("Insufficient gold to complete the purchase.")
 
             transaction_result = connection.execute(sqlalchemy.text("""
                 INSERT INTO transactions (description) VALUES (:description) RETURNING id
@@ -221,7 +229,4 @@ def deliver_capacity_plan(capacity_purchase: CapacityPurchase):
 
     except Exception as e:
         print(f"Error during capacity purchase delivery: {e}")
-        return {"status": "error", "message": "An error occurred while processing the capacity purchase."}
-
-
-
+        raise Exception("An error occurred while processing the capacity purchase.")

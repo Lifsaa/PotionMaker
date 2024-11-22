@@ -4,6 +4,8 @@ from typing import List
 from src.api import auth
 import sqlalchemy
 from src import database as db
+from pulp import LpMaximize, LpProblem, LpVariable, lpSum, LpInteger
+
 
 router = APIRouter(
     prefix="/barrels",
@@ -28,6 +30,7 @@ def post_deliver_barrels(barrels_delivered: List[Barrel], order_id: int):
     total_green_ml_added = 0
     total_red_ml_added = 0
     total_blue_ml_added = 0
+    total_dark_ml_added = 0  
 
     for barrel in barrels_delivered:
         cost = barrel.price * barrel.quantity
@@ -40,24 +43,66 @@ def post_deliver_barrels(barrels_delivered: List[Barrel], order_id: int):
             total_red_ml_added += ml_added
         elif barrel.potion_type == [0, 0, 1, 0]:
             total_blue_ml_added += ml_added
+        elif barrel.potion_type == [0, 0, 0, 1]:
+            total_dark_ml_added += ml_added
+        else:
+            print(f"Invalid potion type for barrel SKU: {barrel.sku}")
+            raise ValueError(f"Invalid potion type for barrel SKU: {barrel.sku}")
 
     with db.engine.begin() as connection:
-        transaction_result = connection.execute(sqlalchemy.text("""
-            INSERT INTO transactions (description) VALUES (:description) RETURNING id
-        """), {"description": f"Barrel delivery order {order_id}"})
-        transaction_id = transaction_result.fetchone().id
+        ml_result = connection.execute(sqlalchemy.text("""
+            SELECT 
+                COALESCE(SUM(red_ml_change), 0) AS red_ml_total,
+                COALESCE(SUM(green_ml_change), 0) AS green_ml_total,
+                COALESCE(SUM(blue_ml_change), 0) AS blue_ml_total,
+                COALESCE(SUM(dark_ml_change), 0) AS dark_ml_total
+            FROM ml_ledger_entries 
+            FOR UPDATE
+        """)).fetchone()
+
+        ml_inventory = {
+            "red": ml_result.red_ml_total or 0,
+            "green": ml_result.green_ml_total or 0,
+            "blue": ml_result.blue_ml_total or 0,
+            "dark": ml_result.dark_ml_total or 0
+        }
+
+        capacity_result = connection.execute(sqlalchemy.text("""
+            SELECT COALESCE(SUM(ml_capacity), 0) AS total_ml_capacity
+            FROM capacity_purchases
+        """)).fetchone()
+        total_ml_capacity_units = 1 + (capacity_result.total_ml_capacity or 0)
+        total_ml_capacity = total_ml_capacity_units * 10000
+
+        new_red_ml = ml_inventory["red"] + total_red_ml_added
+        new_green_ml = ml_inventory["green"] + total_green_ml_added
+        new_blue_ml = ml_inventory["blue"] + total_blue_ml_added
+        new_dark_ml = ml_inventory["dark"] + total_dark_ml_added
+
+        if (new_red_ml > total_ml_capacity or
+            new_green_ml > total_ml_capacity or
+            new_blue_ml > total_ml_capacity or
+            new_dark_ml > total_ml_capacity):
+            print("Cannot add ML. ML capacity would be exceeded.")
+            raise Exception("Cannot exceed ML inventory capacity.")
 
         gold_result = connection.execute(sqlalchemy.text("""
-            SELECT COALESCE(SUM(change), 0) as gold_total FROM gold_ledger_entries 
-        """))
-        current_gold = gold_result.fetchone().gold_total or 0
+            SELECT COALESCE(SUM(change), 0) as gold_total FROM gold_ledger_entries
+            FOR UPDATE
+        """)).fetchone()
+        current_gold = gold_result.gold_total or 0
 
         updated_gold = current_gold - total_gold_deducted
         print(f"Current Gold: {current_gold}, Gold Deducted: {total_gold_deducted}, Updated Gold: {updated_gold}")
 
         if updated_gold < 0:
             print("Error: Not enough gold to complete the delivery.")
-            raise ValueError("Not enough gold")
+            raise Exception("Not enough gold")
+
+        transaction_result = connection.execute(sqlalchemy.text("""
+            INSERT INTO transactions (description) VALUES (:description) RETURNING id
+        """), {"description": f"Barrel delivery order {order_id}"})
+        transaction_id = transaction_result.fetchone().id
 
         connection.execute(sqlalchemy.text("""
             INSERT INTO gold_ledger_entries (transaction_id, change, description)
@@ -69,13 +114,14 @@ def post_deliver_barrels(barrels_delivered: List[Barrel], order_id: int):
         })
 
         connection.execute(sqlalchemy.text("""
-            INSERT INTO ml_ledger_entries (transaction_id, red_ml_change, green_ml_change, blue_ml_change, description)
-            VALUES (:transaction_id, :red_ml, :green_ml, :blue_ml, :description)
+            INSERT INTO ml_ledger_entries (transaction_id, red_ml_change, green_ml_change, blue_ml_change, dark_ml_change, description)
+            VALUES (:transaction_id, :red_ml, :green_ml, :blue_ml, :dark_ml, :description)
         """), {
             "transaction_id": transaction_id,
             "red_ml": total_red_ml_added,
             "green_ml": total_green_ml_added,
             "blue_ml": total_blue_ml_added,
+            "dark_ml": total_dark_ml_added,
             "description": f"Barrel delivery order {order_id}"
         })
 
@@ -86,65 +132,76 @@ def post_deliver_barrels(barrels_delivered: List[Barrel], order_id: int):
 # Gets called once a day
 @router.post("/plan")
 def get_wholesale_purchase_plan(wholesale_catalog: List[Barrel]): 
-    print("Generating wholesale purchase plan.")
+    print("Generating optimized wholesale purchase plan.")
     with db.engine.begin() as connection:
         gold_result = connection.execute(sqlalchemy.text("""
-            SELECT COALESCE(SUM(change), 0) as gold_total FROM gold_ledger_entries
+            SELECT COALESCE(SUM(change), 0) AS gold_total FROM gold_ledger_entries
         """))
         gold = gold_result.fetchone().gold_total or 0
         print(f"Current Gold: {gold}")
 
-        potion_counts = {
-            "num_green_potions": 0,
-            "num_red_potions": 0,
-            "num_blue_potions": 0
+        ml_result = connection.execute(sqlalchemy.text("""
+            SELECT 
+                COALESCE(SUM(red_ml_change), 0) AS red_ml_total,
+                COALESCE(SUM(green_ml_change), 0) AS green_ml_total,
+                COALESCE(SUM(blue_ml_change), 0) AS blue_ml_total,
+                COALESCE(SUM(dark_ml_change), 0) AS dark_ml_total
+            FROM ml_ledger_entries 
+        """)).fetchone()
+
+        ml_inventory = {
+            "red": ml_result.red_ml_total or 0,
+            "green": ml_result.green_ml_total or 0,
+            "blue": ml_result.blue_ml_total or 0,
+            "dark": ml_result.dark_ml_total or 0
         }
-        potion_catalog_ids = {}
-        catalog_res = connection.execute(sqlalchemy.text("""
-            SELECT id, red_component, green_component, blue_component, dark_component
-            FROM potion_catalog
-        """)).fetchall()
-        for row in catalog_res:
-            potion_type = [row.red_component, row.green_component, row.blue_component, row.dark_component]
-            potion_catalog_ids[tuple(potion_type)] = row.id
 
-        for potion_type, catalog_id in potion_catalog_ids.items():
-            ledger_result = connection.execute(sqlalchemy.text("""
-                SELECT COALESCE(SUM(change), 0) as total_inventory
-                FROM potion_inventory_ledger_entries
-                WHERE potion_catalog_id = :catalog_id
-            """), {"catalog_id": catalog_id})
-            total_inventory = ledger_result.fetchone().total_inventory or 0
-            if potion_type == (1, 0, 0, 0):
-                potion_counts["num_red_potions"] = total_inventory
-            elif potion_type == (0, 1, 0, 0):
-                potion_counts["num_green_potions"] = total_inventory
-            elif potion_type == (0, 0, 1, 0):
-                potion_counts["num_blue_potions"] = total_inventory
+        ml_threshold = 1000  
+        ml_needs = [color for color, amount in ml_inventory.items() if amount < ml_threshold]
 
-        print(f"Potion Counts - Green: {potion_counts['num_green_potions']}, Red: {potion_counts['num_red_potions']}, Blue: {potion_counts['num_blue_potions']}")
-       
-        purchase_plan = []
+
+        barrel_vars = {}
         for barrel in wholesale_catalog:
-            print(f"Evaluating Barrel SKU: {barrel.sku}, Price: {barrel.price}")
-            if gold < barrel.price:  
-                print(f"Skipping Barrel SKU: {barrel.sku} due to insufficient gold.")
-                continue
-            
-            if barrel.sku.upper() == "SMALL_GREEN_BARREL" and potion_counts["num_green_potions"] < 10:
-                purchase_plan.append({"sku": barrel.sku, "quantity": 1})
-                gold -= barrel.price
-                print(f"Added Small Green Barrel to purchase plan.")
+            ml_type = ''
+            if barrel.potion_type == [1, 0, 0, 0]:
+                ml_type = 'red'
+            elif barrel.potion_type == [0, 1, 0, 0]:
+                ml_type = 'green'
+            elif barrel.potion_type == [0, 0, 1, 0]:
+                ml_type = 'blue'
+            elif barrel.potion_type == [0, 0, 0, 1]:
+                ml_type = 'dark'
 
-            if barrel.sku.upper() == "SMALL_RED_BARREL" and potion_counts["num_red_potions"] < 10:
-                purchase_plan.append({"sku": barrel.sku, "quantity": 1})
-                gold -= barrel.price
-                print(f"Added Small Red Barrel to purchase plan.")
+            if ml_type in ml_needs:
+                max_quantity = barrel.quantity
+                var = LpVariable(f"b_{barrel.sku}", lowBound=0, upBound=max_quantity, cat=LpInteger)
+                barrel_vars[barrel.sku] = {
+                    "variable": var,
+                    "barrel": barrel,
+                    "ml_type": ml_type
+                }
 
-            if barrel.sku.upper() == "SMALL_BLUE_BARREL" and potion_counts["num_blue_potions"] < 10:
-                purchase_plan.append({"sku": barrel.sku, "quantity": 1})
-                gold -= barrel.price
-                print(f"Added Small Blue Barrel to purchase plan.")
+        if not barrel_vars:
+            print("No barrels needed or affordable.")
+            return []
+
+        prob += lpSum([
+            var["barrel"].ml_per_barrel * var["variable"]
+            for var in barrel_vars.values()
+        ])
+
+        prob += lpSum([
+            var["barrel"].price * var["variable"]
+            for var in barrel_vars.values()
+        ]) <= gold, "GoldConstraint"
+
+        prob.solve()
+
+        purchase_plan = []
+        for sku, var in barrel_vars.items():
+            quantity = int(var["variable"].varValue)
+            if quantity > 0:
+                purchase_plan.append({"sku": sku, "quantity": quantity})
 
         print(f"Final Purchase Plan: {purchase_plan}")
         return purchase_plan
