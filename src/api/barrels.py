@@ -180,7 +180,7 @@ def get_wholesale_purchase_plan(wholesale_catalog: List[Barrel]):
                         "barrel": barrel,
                         "ml_type": ml_type
                     }
-
+            prob = LpProblem("Wholesale Purchase Plan", LpMaximize)
             if not barrel_vars:
                 print("No barrels needed or affordable.")
                 return []
