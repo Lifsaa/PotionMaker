@@ -129,7 +129,6 @@ def post_deliver_barrels(barrels_delivered: List[Barrel], order_id: int):
     return {"message": "Inventory updated via ledger"}
 
 
-# Gets called once a day
 @router.post("/plan")
 def get_wholesale_purchase_plan(wholesale_catalog: List[Barrel]): 
     try:
@@ -157,6 +156,17 @@ def get_wholesale_purchase_plan(wholesale_catalog: List[Barrel]):
                 "dark": ml_result.dark_ml_total or 0
             }
 
+            capacity_result = connection.execute(sqlalchemy.text("""
+                SELECT COALESCE(SUM(ml_capacity), 0) AS total_ml_capacity
+                FROM capacity_purchases
+            """)).fetchone()
+            total_ml_capacity_units = 1 + (capacity_result.total_ml_capacity or 0)
+            total_ml_capacity = total_ml_capacity_units * 10000
+
+            current_total_ml = sum(ml_inventory.values())
+            remaining_capacity = total_ml_capacity - current_total_ml
+            print(f"Remaining ML Capacity: {remaining_capacity} ml")
+
             ml_threshold = 1000  
             ml_needs = [color for color, amount in ml_inventory.items() if amount < ml_threshold]
 
@@ -174,32 +184,39 @@ def get_wholesale_purchase_plan(wholesale_catalog: List[Barrel]):
 
                 if ml_type in ml_needs:
                     max_quantity = barrel.quantity
-                    var = LpVariable(f"b_{barrel.sku}", lowBound=0, upBound=max_quantity, cat=LpInteger)
+                    var = LpVariable(f"b_{barrel.sku.replace(' ', '_')}", lowBound=0, upBound=max_quantity, cat=LpInteger)
                     barrel_vars[barrel.sku] = {
                         "variable": var,
                         "barrel": barrel,
                         "ml_type": ml_type
                     }
-            prob = LpProblem("Wholesale Purchase Plan", LpMaximize)
+
             if not barrel_vars:
                 print("No barrels needed or affordable.")
                 return []
 
+            prob = LpProblem("Wholesale_Purchase_Plan", LpMaximize)
+
             prob += lpSum([
                 var["barrel"].ml_per_barrel * var["variable"]
                 for var in barrel_vars.values()
-            ])
+            ]), "Total_ML"
 
             prob += lpSum([
                 var["barrel"].price * var["variable"]
                 for var in barrel_vars.values()
             ]) <= gold, "GoldConstraint"
 
+            prob += lpSum([
+                var["barrel"].ml_per_barrel * var["variable"]
+                for var in barrel_vars.values()
+            ]) <= remaining_capacity, "MLCapacityConstraint"
+
             prob.solve()
 
             purchase_plan = []
             for sku, var in barrel_vars.items():
-                quantity = int(var["variable"].varValue)
+                quantity = int(var["variable"].varValue) if var["variable"].varValue else 0
                 if quantity > 0:
                     purchase_plan.append({"sku": sku, "quantity": quantity})
 
