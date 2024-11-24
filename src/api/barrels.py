@@ -57,7 +57,6 @@ def post_deliver_barrels(barrels_delivered: List[Barrel], order_id: int):
                 COALESCE(SUM(blue_ml_change), 0) AS blue_ml_total,
                 COALESCE(SUM(dark_ml_change), 0) AS dark_ml_total
             FROM ml_ledger_entries 
-            FOR UPDATE
         """)).fetchone()
 
         ml_inventory = {
@@ -88,7 +87,6 @@ def post_deliver_barrels(barrels_delivered: List[Barrel], order_id: int):
 
         gold_result = connection.execute(sqlalchemy.text("""
             SELECT COALESCE(SUM(change), 0) as gold_total FROM gold_ledger_entries
-            FOR UPDATE
         """)).fetchone()
         current_gold = gold_result.gold_total or 0
 
