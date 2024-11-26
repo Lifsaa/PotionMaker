@@ -139,7 +139,7 @@ def post_deliver_bottles(potions_delivered: List[PotionInventory], order_id: int
 @router.post("/plan")
 def get_bottle_plan():
     """
-    Generate an optimal bottling plan using Integer Linear Programming to maximize profit.
+    Generate an optimal bottling plan using Integer Linear Programming to maximize profit and variety.
     """
     print("Starting optimized bottling plan generation.")
     try:
@@ -187,7 +187,7 @@ def get_bottle_plan():
 
             if available_capacity <= 0:
                 print("No available capacity for new potions.")
-                return [] 
+                return []
 
             prob = LpProblem("Potion_Production", LpMaximize)
 
@@ -198,8 +198,10 @@ def get_bottle_plan():
                 if max_possible <= 0:
                     continue
                 var = LpVariable(f"x_{potion.id}", lowBound=0, upBound=max_possible, cat=LpInteger)
+                is_produced = LpVariable(f"y_{potion.id}", cat="Binary")
                 potion_vars[potion.id] = {
                     "variable": var,
+                    "is_produced": is_produced,
                     "data": potion
                 }
 
@@ -207,9 +209,15 @@ def get_bottle_plan():
                 print("No potions can be produced within capacity constraints.")
                 return []
 
-            # Objective function: Maximize total profit
-            prob += lpSum([potion_vars[potion_id]["data"].price * var["variable"]
-                           for potion_id, var in potion_vars.items()])
+            # Objective function: Maximize profit and variety
+            profit_weight = 0.8
+            variety_weight = 0.2
+
+            prob += (
+                profit_weight * lpSum([potion_vars[potion_id]["data"].price * var["variable"]
+                                       for potion_id, var in potion_vars.items()]) +
+                variety_weight * lpSum([var["is_produced"] for var in potion_vars.values()])
+            ), "ProfitAndVariety"
 
             # Constraints:
             prob += lpSum([var["variable"] for var in potion_vars.values()]) <= available_capacity, "TotalCapacity"
@@ -226,11 +234,16 @@ def get_bottle_plan():
                 current_inventory = current_potion_inventory.get(potion_id, 0)
                 prob += var["variable"] + current_inventory <= 50, f"PerPotionLimit_{potion_id}"
 
+            for potion_id, var in potion_vars.items():
+                max_possible = var["variable"].upBound
+                prob += var["variable"] >= var["is_produced"], f"Link_{potion_id}"
+                prob += var["variable"] <= var["is_produced"] * max_possible, f"LinkMax_{potion_id}"
+
             prob.solve()
 
             production_plan = []
             for potion_id, var in potion_vars.items():
-                quantity = int(var["variable"].varValue)
+                quantity = int(var["variable"].varValue) if var["variable"].varValue else 0
                 if quantity > 0:
                     potion_data = var["data"]
                     production_plan.append({
